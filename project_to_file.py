@@ -123,7 +123,3 @@ def project_to_file_main():
     concatenate_project_files(PROJECT_PATH)
     print(f"Done: {PROJECT_PATH}\\combined_output.txt")
 
-    #PROJECT_PATH = r'C:\Py\ImageGeneration'
-    #concatenate_project_files(PROJECT_PATH)
-    #print(f"Done: {PROJECT_PATH}\\combined_output.txt")
-
