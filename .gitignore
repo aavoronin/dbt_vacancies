@@ -1,0 +1,5 @@
+
+dbt_vacancies/target/
+dbt_packages/
+logs/
+.env

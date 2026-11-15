@@ -1,0 +1,20 @@
+# dbt connection profile mirroring the PostgreSQL connection
+# from the DBeaver screen: host localhost, port 5432,
+# database "postgres", user "postgres".
+# The password is masked on the screen -- replace the value
+# below with the real one before running dbt commands.
+# Place this file in ~/.dbt/profiles.yml, or run dbt with
+# `--profiles-dir .` from the project root.
+
+dbt_vacancies:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      port: 5432
+      user: postgres
+      password: "{{ env_var('DBT_PG_PASSWORD') }}"
+      dbname: vacancies
+      schema: public
+      threads: 4

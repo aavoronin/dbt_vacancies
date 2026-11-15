@@ -1,0 +1,43 @@
+name: 'dbt_vacancies'
+version: '1.0.0'
+profile: 'dbt_vacancies'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  dbt_vacancies:
+    # Default materialization for the project
+    +materialized: view
+
+    # Route models to specific schemas based on their folder location.
+    # dbt will automatically create these schemas in the database if
+    # they do not already exist.
+
+    # Dictionary / Reference tables (e.g., calendar, regions)
+    dict:
+      +schema: dict
+      +materialized: table
+
+    # Staging / Raw data cleaning and standardization
+    stage:
+      +schema: stage
+      +materialized: view
+
+    # Fact tables / Core business events and transactions
+    facts:
+      +schema: facts
+      +materialized: table
+
+    # Marts / Business-ready aggregates and final models
+    marts:
+      +schema: marts
+      +materialized: table

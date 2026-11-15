@@ -1,0 +1,77 @@
+version: 2
+
+models:
+  - name: calendar
+    description: "A comprehensive date dimension table (calendar) populated from 1900 to 2100."
+    columns:
+      - name: date_key
+        description: "Surrogate key in YYYYMMDD format."
+        data_tests:
+          - unique
+          - not_null
+      - name: full_date
+        description: "Actual calendar date."
+        data_tests:
+          - not_null
+      - name: year
+        description: "Calendar year."
+      - name: year_name
+        description: "Year as a 4-character string (e.g., '2026')."
+      - name: is_leap_year
+        description: "Boolean flag indicating if the year is a leap year."
+      - name: first_day_of_year
+        description: "Date of the first day of the year."
+      - name: last_day_of_year
+        description: "Date of the last day of the year."
+      - name: days_in_year
+        description: "Total number of days in the year (365 or 366)."
+      - name: quarter
+        description: "Quarter number (1 to 4)."
+      - name: quarter_name
+        description: "Quarter name (e.g., 'Q1')."
+      - name: quarter_year_name
+        description: "Quarter and year combined (e.g., 'Q1 2026')."
+      - name: first_day_of_quarter
+        description: "Date of the first day of the quarter."
+      - name: last_day_of_quarter
+        description: "Date of the last day of the quarter."
+      - name: month
+        description: "Month number (1 to 12)."
+      - name: month_name
+        description: "Full month name (e.g., 'January')."
+      - name: month_name_short
+        description: "Short month name (e.g., 'Jan')."
+      - name: month_year_name
+        description: "Month and year combined (e.g., 'January 2026')."
+      - name: first_day_of_month
+        description: "Date of the first day of the month."
+      - name: last_day_of_month
+        description: "Date of the last day of the month."
+      - name: days_in_month
+        description: "Total number of days in the month."
+      - name: week_of_year_iso
+        description: "ISO 8601 week number (1 to 53)."
+      - name: week_of_month
+        description: "Week number within the month (1 to 5)."
+      - name: first_day_of_week
+        description: "Date of the first day of the week (Monday, ISO standard)."
+      - name: last_day_of_week
+        description: "Date of the last day of the week (Sunday, ISO standard)."
+      - name: day_of_year
+        description: "Day number within the year (1 to 365/366)."
+      - name: day_of_month
+        description: "Day number within the month (1 to 31)."
+      - name: day_of_week_iso
+        description: "Day of week (1 = Monday to 7 = Sunday, ISO standard)."
+      - name: day_of_week_us
+        description: "Day of week (1 = Sunday to 7 = Saturday, US standard)."
+      - name: day_name
+        description: "Full day name (e.g., 'Monday')."
+      - name: day_name_short
+        description: "Short day name (e.g., 'Mon')."
+      - name: is_weekend
+        description: "Boolean flag indicating if the day is a weekend."
+      - name: is_holiday
+        description: "Boolean flag indicating if the day is a holiday (defaults to FALSE)."
+      - name: holiday_name
+        description: "Name of the holiday (defaults to NULL)."
