@@ -1,0 +1,95 @@
+version: 2
+
+models:
+  - name: sources
+    description: "Reference table of data sources. Populated by the ETL."
+    columns:
+      - name: source_id
+        description: "Surrogate key for the source."
+        data_tests:
+          - unique
+          - not_null
+      - name: source_name
+        description: "Human-readable name of the source."
+        data_tests:
+          - unique
+          - not_null
+      - name: source_dttn
+        description: "Timestamp when the source was first created."
+        data_tests:
+          - not_null
+
+  - name: loads
+    description: "Load batch header table. One row per ETL batch."
+    columns:
+      - name: load_id
+        description: "Surrogate key for the load batch."
+        data_tests:
+          - unique
+          - not_null
+      - name: load_dttm
+        description: "Timestamp captured at the start of the load batch."
+        data_tests:
+          - not_null
+      - name: source_id
+        description: "FK to stage.sources."
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('sources')
+              field: source_id
+
+  - name: vacancy_jsons
+    description: "Raw JSON files loaded from the vacancy folders."
+    columns:
+      - name: vacancy_json_id
+        description: "Surrogate key for the loaded file row."
+        data_tests:
+          - unique
+          - not_null
+      - name: json
+        description: "Raw file content (UTF-8). May be invalid JSON
+          until parsed downstream."
+      - name: file_path
+        description: "Absolute path of the source file."
+        data_tests:
+          - unique
+          - not_null
+      - name: file_created_dttm
+        description: "File system creation timestamp."
+      - name: file_updated_dttm
+        description: "File system last-modified timestamp."
+      - name: load_id
+        description: "FK to stage.loads batch that wrote this row."
+        data_tests:
+          - relationships:
+              to: ref('loads')
+              field: load_id
+
+  - name: vw_vacancy_jsons
+    description: "Parsed view of raw vacancy JSON files with extracted scoring metrics."
+    columns:
+      - name: vacancy_json_id
+        description: "Surrogate key for the loaded file row."
+      - name: saved_date
+        description: "Timestamp when the vacancy was saved."
+      - name: parsed_date
+        description: "Timestamp when the vacancy was parsed."
+      - name: parsing_version
+        description: "Version of the parsing logic used."
+      - name: vacancy_score
+        description: "Base score of the vacancy."
+      - name: score
+        description: "Extracted score from estimation2 or estimation1 based on model_id validity."
+      - name: score_percentile
+        description: "Extracted score percentile from estimation2 or estimation1."
+      - name: json
+        description: "Raw JSON content."
+      - name: file_path
+        description: "Absolute path of the source file."
+      - name: file_created_dttm
+        description: "File system creation timestamp."
+      - name: file_updated_dttm
+        description: "File system last-modified timestamp."
+      - name: load_id
+        description: "FK to stage.loads batch that wrote this row."
