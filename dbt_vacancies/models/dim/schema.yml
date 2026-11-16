@@ -1,0 +1,74 @@
+version: 2
+
+models:
+  - name: models
+    description: "Dimension table for AI model identifiers used in estimations."
+    columns:
+      - name: model_id
+        description: "Surrogate ID for the model."
+      - name: model_name
+        description: "The model identifier string."
+
+  - name: titles
+    description: "Dimension table for job titles."
+    columns:
+      - name: title_id
+        description: "Surrogate ID for the title."
+      - name: title_name
+        description: "The job title string."
+
+  - name: levels
+    description: "Dimension table for seniority levels."
+    columns:
+      - name: level_id
+        description: "Surrogate ID for the level."
+      - name: level_name
+        description: "The seniority level string."
+
+  - name: employment_types
+    description: "Dimension table for employment types (e.g., remote, hybrid)."
+    columns:
+      - name: employment_type_id
+        description: "Surrogate ID for the employment type."
+      - name: employment_type_name
+        description: "The employment type string."
+
+  - name: contract_types
+    description: "Dimension table for contract types (e.g., permanent)."
+    columns:
+      - name: contract_type_id
+        description: "Surrogate ID for the contract type."
+      - name: contract_type_name
+        description: "The contract type string."
+
+  - name: companies
+    description: "Dimension table for company names."
+    columns:
+      - name: company_id
+        description: "Surrogate ID for the company."
+      - name: company_name
+        description: "The company name string."
+
+  - name: company_industries
+    description: "Dimension table for company industries."
+    columns:
+      - name: company_industry_id
+        description: "Surrogate ID for the industry."
+      - name: company_industry_name
+        description: "The industry string."
+
+  - name: vacancy_sites
+    description: "Dimension table for job board sites."
+    columns:
+      - name: vacancy_site_id
+        description: "Surrogate ID for the site."
+      - name: vacancy_site_name
+        description: "The job board site string."
+
+  - name: vacancy_ids
+    description: "Dimension table for unique vacancy identifiers (Site_JobId)."
+    columns:
+      - name: vacancy_id
+        description: "Surrogate ID for the vacancy identifier."
+      - name: vacancy_id_name
+        description: "The concatenated Site_JobId string."

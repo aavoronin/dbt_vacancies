@@ -1,0 +1,48 @@
+version: 2
+
+models:
+  - name: vacancy
+    description: "Central fact table for vacancy scoring and attributes, partitioned by month."
+    columns:
+      - name: vacancy_fact_id
+        description: "Auto-incrementing surrogate ID for the fact record."
+      - name: vacancy_json_id
+        description: "Foreign key to the raw stage.vacancy_jsons table."
+      - name: saved_date_id
+        description: "Date ID (YYYYMMDD) for when the vacancy was saved."
+      - name: parsed_date_id
+        description: "Date ID (YYYYMMDD) for when the vacancy was parsed."
+      - name: file_created_date_id
+        description: "Date ID (YYYYMMDD) for file system creation."
+      - name: file_updated_date_id
+        description: "Date ID (YYYYMMDD) for file system last update."
+      - name: model_id
+        description: "Foreign key to dim.models."
+      - name: title_id
+        description: "Foreign key to dim.titles."
+      - name: level_id
+        description: "Foreign key to dim.levels."
+      - name: employment_type_id
+        description: "Foreign key to dim.employment_types."
+      - name: contract_type_id
+        description: "Foreign key to dim.contract_types."
+      - name: company_id
+        description: "Foreign key to dim.companies."
+      - name: company_industry_id
+        description: "Foreign key to dim.company_industries."
+      - name: vacancy_site_id
+        description: "Foreign key to dim.vacancy_sites."
+      - name: vacancy_id
+        description: "Foreign key to dim.vacancy_ids."
+      - name: score
+        description: "Extracted score from the preferred estimation."
+      - name: score_percentile
+        description: "Extracted score percentile from the preferred estimation."
+      - name: load_dttm
+        description: "Timestamp of the ETL batch that last modified this record."
+      - name: load_id
+        description: "Foreign key to the ETL batch load."
+      - name: source_id
+        description: "Foreign key to the data source."
+      - name: partition_key
+        description: "Partition key in YYYYMM format based on saved_date."
