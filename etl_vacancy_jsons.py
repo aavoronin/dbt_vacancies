@@ -56,6 +56,7 @@ ON CONFLICT (file_path) DO UPDATE SET
     load_id = EXCLUDED.load_id
 WHERE stage.vacancy_jsons.file_updated_dttm
       < EXCLUDED.file_updated_dttm
+RETURNING xmax
 """
 
 
@@ -171,8 +172,18 @@ def load_batch(conn, source_id, batch):
         )
         load_id = cur.fetchone()[0]
         rows = [(c, fp, fc, fu, load_id) for (c, fp, fc, fu) in batch]
-        execute_values(cur, UPSERT_SQL, rows, page_size=BATCH_SIZE)
-        print(f"Batch load_id={load_id} rows={len(rows)}")
+        results = execute_values(
+            cur, UPSERT_SQL, rows, page_size=BATCH_SIZE, fetch=True
+        )
+        inserted = sum(1 for r in results if r[0] == 0)
+        updated = len(results) - inserted
+        unchanged = len(rows) - len(results)
+        print(
+            f"Processed batch with load_id={load_id} "
+            f"inserted={inserted} updated={updated} "
+            f"unchanged={unchanged}"
+        )
+        return inserted, updated, unchanged
 
 
 def main():
@@ -182,8 +193,19 @@ def main():
         source_id = get_source_id(conn)
         candidates = collect_candidates(conn)
         print(f"Files to load/update: {len(candidates)}")
+        total_inserted = 0
+        total_updated = 0
+        total_unchanged = 0
         for batch in chunked(candidates, BATCH_SIZE):
-            load_batch(conn, source_id, batch)
+            ins, upd, unc = load_batch(conn, source_id, batch)
+            total_inserted += ins
+            total_updated += upd
+            total_unchanged += unc
+        print(
+            f"Total inserted={total_inserted} "
+            f"updated={total_updated} "
+            f"unchanged={total_unchanged}"
+        )
     finally:
         conn.close()
 

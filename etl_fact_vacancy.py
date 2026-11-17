@@ -191,8 +191,15 @@ def main():
 
         print(f"Total records to process: {len(rows)}")
 
+        total_inserted = 0
+        total_updated = 0
+        total_unchanged = 0
+
         for batch in chunked(rows, BATCH_SIZE):
             batch_ts = datetime.now(timezone.utc)
+            inserted = 0
+            updated = 0
+            unchanged = 0
 
             with conn, conn.cursor() as cur:
                 cur.execute("""
@@ -302,6 +309,7 @@ def main():
 
                     if cur.fetchone():
                         # Record unchanged, skip
+                        unchanged += 1
                         continue
 
                     # Check if record exists
@@ -342,6 +350,7 @@ def main():
                                             vacancy_json_id
                                         ))
                             conn.commit()
+                            updated += 1
                         except Exception as e:
                             print(f"ERROR updating vacancy_json_id={vacancy_json_id}: {e}")
                             conn.rollback()
@@ -367,11 +376,26 @@ def main():
                                             score, score_percentile, batch_ts, load_id, source_id, partition_key
                                         ))
                             conn.commit()
+                            inserted += 1
                         except Exception as e:
                             print(f"ERROR inserting vacancy_json_id={vacancy_json_id}: {e}")
                             conn.rollback()
 
-            print(f"Processed batch with load_id={load_id}")
+            total_inserted += inserted
+            total_updated += updated
+            total_unchanged += unchanged
+
+            print(
+                f"Processed batch with load_id={load_id} "
+                f"inserted={inserted} updated={updated} "
+                f"unchanged={unchanged}"
+            )
+
+        print(
+            f"Total inserted={total_inserted} "
+            f"updated={total_updated} "
+            f"unchanged={total_unchanged}"
+        )
 
     finally:
         conn.close()
