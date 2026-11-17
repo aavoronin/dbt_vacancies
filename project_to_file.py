@@ -36,19 +36,20 @@ def detect_and_read_file(file_path: Path) -> str:
 PROMPT = """
 INPUT FORMAT:
 The input contains concatenated files delimited by:
-'========== START FileName.py =========='
+'=====START path/to/FileName.ext ====='
 ...code...
-'========== END FileName.py =========='
+'=====END path/to/FileName.ext ====='
 These markers are for parsing only and must NEVER appear in the output.
 
 OUTPUT FORMAT:
 - Return ONLY modified or newly created files.
-- Each file must be in a separate markdown code block with the correct language identifier.
-- Precede each block with the exact filename (e.g., ### 📄 FileName.py).
+- Each file must be in a separate markdown code block with the correct language identifier (e.g., python, sql, yaml).
+- Precede each block with the exact relative file path (e.g., ### 📄 models/dim/my_model.sql or ### 📄 etl_script.py).
 - Output complete, runnable file contents. No diffs, no partial snippets.
 - Omit unchanged files entirely.
 
 CODING STANDARDS:
+General:
 1. All comments and user-facing strings must be in English.
 2. DO NOT translate technical identifiers, tag names, file paths, API keys, or environment variables.
 3. Keep lines ≤80 characters where practical, without breaking syntax or readability.
@@ -58,6 +59,19 @@ CODING STANDARDS:
 7. Update imports, dependencies, or configuration if required by the changes.
 8. If requirements are ambiguous or conflicting, pause and ask for clarification instead of guessing.
 9. Do not add or delete empty lines in the places where code was not changed.
+
+Python (.py):
+10. Follow PEP 8. Use parameterized queries (e.g., %s for psycopg2) to prevent SQL injection; never use f-strings for SQL values.
+
+SQL & dbt (.sql):
+11. Use UPPERCASE for SQL keywords (SELECT, FROM, WHERE) and lowercase for identifiers.
+12. Always use dbt ref() and source() macros to reference models/sources. NEVER hardcode schema or table names.
+13. Preserve all Jinja logic, macros, and {{ config(...) }} blocks unless explicitly asked to change them.
+14. Align columns and use consistent indentation (4 spaces) in SQL queries.
+
+YAML (.yml, .yaml):
+15. Maintain consistent 2-space indentation.
+16. Preserve all existing description, tests, and meta fields unless explicitly asked to modify them.
 """
 
 
@@ -122,4 +136,3 @@ def project_to_file_main():
     PROJECT_PATH = r"C:\Py\dbt_vacancies"
     concatenate_project_files(PROJECT_PATH)
     print(f"Done: {PROJECT_PATH}\\combined_output.txt")
-
