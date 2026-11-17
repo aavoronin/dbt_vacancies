@@ -307,33 +307,69 @@ def main():
                     # Check if record exists
                     cur.execute("SELECT 1 FROM fact.vacancy WHERE vacancy_json_id = %s", (vacancy_json_id,))
                     if cur.fetchone():
-                        # Update load tracking for changed record
-                        cur.execute("""
-                                    UPDATE fact.vacancy
-                                    SET load_dttm = %s,
-                                        load_id   = %s
-                                    WHERE vacancy_json_id = %s
-                                    """, (batch_ts, load_id, vacancy_json_id))
+                        # Update all fields for changed record, including dimension keys
+                        try:
+                            cur.execute("""
+                                        UPDATE fact.vacancy
+                                        SET load_dttm = %s,
+                                            load_id   = %s,
+                                            model_id = %s,
+                                            title_id = %s,
+                                            level_id = %s,
+                                            employment_type_id = %s,
+                                            contract_type_id = %s,
+                                            company_id = %s,
+                                            company_industry_id = %s,
+                                            vacancy_site_id = %s,
+                                            vacancy_id = %s,
+                                            score = %s,
+                                            score_percentile = %s,
+                                            saved_date_id = %s,
+                                            parsed_date_id = %s,
+                                            file_created_date_id = %s,
+                                            file_updated_date_id = %s,
+                                            partition_key = %s
+                                        WHERE vacancy_json_id = %s
+                                        """, (
+                                            batch_ts, load_id,
+                                            model_id_dim, title_id, level_id, employment_type_id,
+                                            contract_type_id, company_id, company_industry_id,
+                                            vacancy_site_id, vacancy_id_dim,
+                                            score, score_percentile,
+                                            saved_date_id, parsed_date_id,
+                                            file_created_date_id, file_updated_date_id,
+                                            partition_key,
+                                            vacancy_json_id
+                                        ))
+                            conn.commit()
+                        except Exception as e:
+                            print(f"ERROR updating vacancy_json_id={vacancy_json_id}: {e}")
+                            conn.rollback()
                     else:
                         # Insert new fact record
-                        cur.execute("""
-                                    INSERT INTO fact.vacancy (vacancy_json_id, saved_date_id, parsed_date_id,
-                                                              file_created_date_id, file_updated_date_id,
-                                                              model_id, title_id, level_id, employment_type_id,
-                                                              contract_type_id, company_id, company_industry_id,
-                                                              vacancy_site_id, vacancy_id,
-                                                              score, score_percentile, load_dttm, load_id, source_id,
-                                                              partition_key)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                            %s)
-                                    """, (
-                                        vacancy_json_id, saved_date_id, parsed_date_id,
-                                        file_created_date_id, file_updated_date_id,
-                                        model_id_dim, title_id, level_id, employment_type_id,
-                                        contract_type_id, company_id, company_industry_id,
-                                        vacancy_site_id, vacancy_id_dim,
-                                        score, score_percentile, batch_ts, load_id, source_id, partition_key
-                                    ))
+                        try:
+                            cur.execute("""
+                                        INSERT INTO fact.vacancy (vacancy_json_id, saved_date_id, parsed_date_id,
+                                                                  file_created_date_id, file_updated_date_id,
+                                                                  model_id, title_id, level_id, employment_type_id,
+                                                                  contract_type_id, company_id, company_industry_id,
+                                                                  vacancy_site_id, vacancy_id,
+                                                                  score, score_percentile, load_dttm, load_id, source_id,
+                                                                  partition_key)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                                %s)
+                                        """, (
+                                            vacancy_json_id, saved_date_id, parsed_date_id,
+                                            file_created_date_id, file_updated_date_id,
+                                            model_id_dim, title_id, level_id, employment_type_id,
+                                            contract_type_id, company_id, company_industry_id,
+                                            vacancy_site_id, vacancy_id_dim,
+                                            score, score_percentile, batch_ts, load_id, source_id, partition_key
+                                        ))
+                            conn.commit()
+                        except Exception as e:
+                            print(f"ERROR inserting vacancy_json_id={vacancy_json_id}: {e}")
+                            conn.rollback()
 
             print(f"Processed batch with load_id={load_id}")
 
