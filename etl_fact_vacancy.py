@@ -109,17 +109,64 @@ def get_partition_key(dt_str):
 
 
 def get_estimation_field(est1, est2, field_name):
-    model_id_2 = est2.get("model_id") if est2 else None
-    model_id_1 = est1.get("model_id") if est1 else None
+    """
+    Extract a field from the preferred estimation (estimation2 if valid, else estimation1).
+
+    For model_id, score, score_percentile: look at top level of estimation object.
+    For all other fields (Title, Level, etc.): look inside the nested "json" object.
+
+    Returns the field value as a string, or None if missing/invalid.
+    """
+    # Determine which estimation to use based on model_id validity
+    model_id_2 = est2.get("model_id") if est2 and isinstance(est2, dict) else None
+    model_id_1 = est1.get("model_id") if est1 and isinstance(est1, dict) else None
 
     use_est2 = model_id_2 is not None and str(model_id_2).lower() not in ("null", "none", "")
     use_est1 = model_id_1 is not None and str(model_id_1).lower() not in ("null", "none", "")
 
-    if use_est2:
-        return est2.get(field_name)
-    elif use_est1:
-        return est1.get(field_name)
-    else:
+    # If neither estimation is valid, return None
+    if not use_est2 and not use_est1:
+        return None
+
+    try:
+        # For model_id, score, score_percentile: look at top level of estimation
+        if field_name in ("model_id", "score", "score_percentile"):
+            if use_est2:
+                val = est2.get(field_name)
+            else:
+                val = est1.get(field_name)
+        else:
+            # For all other fields: look inside the nested "json" object
+            # Get the nested json object from the preferred estimation
+            if use_est2:
+                nested_json = est2.get("json") if est2 else None
+            else:
+                nested_json = est1.get("json") if est1 else None
+
+            # Ensure nested_json is a dict
+            if not isinstance(nested_json, dict):
+                nested_json = {}
+
+            val = nested_json.get(field_name)
+
+        # Handle different value types
+        if val is None:
+            return None
+
+        # If it's a list or tuple, take the first element
+        if isinstance(val, (list, tuple)):
+            return str(val[0]) if val else None
+
+        # If it's a string, return as-is
+        if isinstance(val, str):
+            return val.strip() if val.strip() else None
+
+        # For other types (int, float, bool), convert to string
+        return str(val)
+
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Warning: Failed to extract {field_name}: {e}")
         return None
 
 
@@ -163,6 +210,7 @@ def main():
                 est1 = j.get("estimation1")
                 est2 = j.get("estimation2")
 
+                # Extract fields from the preferred estimation
                 model_id = get_estimation_field(est1, est2, "model_id")
                 title = get_estimation_field(est1, est2, "Title")
                 level = get_estimation_field(est1, est2, "Level")
@@ -176,9 +224,11 @@ def main():
                 score = get_estimation_field(est1, est2, "score")
                 score_percentile = get_estimation_field(est1, est2, "score_percentile")
 
+                # Create vacancy_id by concatenating VacancySite and JobId
                 vacancy_id_str = f"{vacancy_site or 'UNKNOWN'}_{job_id or 'UNKNOWN'}"
 
                 with conn, conn.cursor() as cur:
+                    # Get or create dimension keys
                     model_id_dim = get_dim_key(cur, "models", "model_id", "model_name", model_id, batch_ts, load_id,
                                                source_id)
                     title_id = get_dim_key(cur, "titles", "title_id", "title_name", title, batch_ts, load_id, source_id)
@@ -198,6 +248,7 @@ def main():
                     vacancy_id_dim = get_dim_key(cur, "vacancy_ids", "vacancy_id", "vacancy_id_name", vacancy_id_str,
                                                  batch_ts, load_id, source_id)
 
+                    # Extract date fields
                     saved_date_str = j.get("saved_date")
                     parsed_date_str = j.get("parsed_date")
 
@@ -207,6 +258,7 @@ def main():
                     file_updated_date_id = get_date_id(str(file_updated_dttm) if file_updated_dttm else None)
                     partition_key = get_partition_key(saved_date_str)
 
+                    # Check if record already exists with the same values
                     cur.execute("""
                                 SELECT 1
                                 FROM fact.vacancy
@@ -249,10 +301,13 @@ def main():
                                 ))
 
                     if cur.fetchone():
+                        # Record unchanged, skip
                         continue
 
+                    # Check if record exists
                     cur.execute("SELECT 1 FROM fact.vacancy WHERE vacancy_json_id = %s", (vacancy_json_id,))
                     if cur.fetchone():
+                        # Update load tracking for changed record
                         cur.execute("""
                                     UPDATE fact.vacancy
                                     SET load_dttm = %s,
@@ -260,6 +315,7 @@ def main():
                                     WHERE vacancy_json_id = %s
                                     """, (batch_ts, load_id, vacancy_json_id))
                     else:
+                        # Insert new fact record
                         cur.execute("""
                                     INSERT INTO fact.vacancy (vacancy_json_id, saved_date_id, parsed_date_id,
                                                               file_created_date_id, file_updated_date_id,

@@ -27,6 +27,11 @@ models:
       +schema: dict
       +materialized: table
 
+    # Dimension tables for star schema
+    dim:
+      +schema: dim
+      +materialized: external_table
+
     # Staging / Raw data cleaning and standardization
     stage:
       +schema: stage
