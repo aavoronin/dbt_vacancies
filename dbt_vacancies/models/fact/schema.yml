@@ -46,3 +46,7 @@ models:
         description: "Foreign key to the data source."
       - name: partition_key
         description: "Partition key in YYYYMM format based on saved_date."
+      - name: modified_timestamp
+        description: "Timestamp of the source file's last modification."
+      - name: version
+        description: "ETL processing version for the record."

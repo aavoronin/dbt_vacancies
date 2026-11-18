@@ -5,6 +5,7 @@ from pathlib import Path
 import psycopg2
 
 BATCH_SIZE = 1024
+VACANCY_VERSION = 1
 
 DIM_CONFIG = {
     "models": ("model_id", "model_name"),
@@ -37,6 +38,7 @@ def connect():
         dbname="vacancies",
         password=get_password(),
     )
+
 
 
 def ensure_default_dims(conn):
@@ -182,11 +184,19 @@ def main():
         source_id = get_source_id(conn)
 
         with conn.cursor() as cur:
+            # Filter out records that are already up-to-date to save ETL time
             cur.execute("""
-                        SELECT vacancy_json_id, "json", file_created_dttm, file_updated_dttm
-                        FROM stage.vacancy_jsons
-                        ORDER BY ("json"::json ->> 'saved_date') ASC
-                        """)
+                SELECT vj.vacancy_json_id, vj."json", 
+                       vj.file_created_dttm, vj.file_updated_dttm
+                FROM stage.vacancy_jsons vj
+                LEFT JOIN fact.vacancy fv 
+                  ON vj.vacancy_json_id = fv.vacancy_json_id
+                WHERE fv.vacancy_json_id IS NULL
+                   OR fv.version < %s
+                   OR fv.modified_timestamp IS DISTINCT 
+                      FROM vj.file_updated_dttm
+                ORDER BY (vj."json"::json ->> 'saved_date') ASC
+            """, (VACANCY_VERSION,))
             rows = cur.fetchall()
 
         print(f"Total records to process: {len(rows)}")
@@ -265,90 +275,50 @@ def main():
                     file_updated_date_id = get_date_id(str(file_updated_dttm) if file_updated_dttm else None)
                     partition_key = get_partition_key(saved_date_str)
 
-                    # Check if record already exists with the same values
-                    cur.execute("""
-                                SELECT 1
-                                FROM fact.vacancy
-                                WHERE vacancy_json_id = %s
-                                  AND score IS NOT DISTINCT
-                                FROM %s
-                                    AND score_percentile IS NOT DISTINCT
-                                FROM %s
-                                    AND model_id IS NOT DISTINCT
-                                FROM %s
-                                    AND title_id IS NOT DISTINCT
-                                FROM %s
-                                    AND level_id IS NOT DISTINCT
-                                FROM %s
-                                    AND employment_type_id IS NOT DISTINCT
-                                FROM %s
-                                    AND contract_type_id IS NOT DISTINCT
-                                FROM %s
-                                    AND company_id IS NOT DISTINCT
-                                FROM %s
-                                    AND company_industry_id IS NOT DISTINCT
-                                FROM %s
-                                    AND vacancy_site_id IS NOT DISTINCT
-                                FROM %s
-                                    AND vacancy_id IS NOT DISTINCT
-                                FROM %s
-                                    AND saved_date_id IS NOT DISTINCT
-                                FROM %s
-                                    AND parsed_date_id IS NOT DISTINCT
-                                FROM %s
-                                    AND file_created_date_id IS NOT DISTINCT
-                                FROM %s
-                                    AND file_updated_date_id IS NOT DISTINCT
-                                FROM %s
-                                """, (
-                                    vacancy_json_id, score, score_percentile, model_id_dim, title_id, level_id,
-                                    employment_type_id, contract_type_id, company_id, company_industry_id,
-                                    vacancy_site_id, vacancy_id_dim, saved_date_id, parsed_date_id,
-                                    file_created_date_id, file_updated_date_id
-                                ))
-
-                    if cur.fetchone():
-                        # Record unchanged, skip
-                        unchanged += 1
-                        continue
-
                     # Check if record exists
-                    cur.execute("SELECT 1 FROM fact.vacancy WHERE vacancy_json_id = %s", (vacancy_json_id,))
+                    cur.execute(
+                        "SELECT 1 FROM fact.vacancy WHERE vacancy_json_id = %s",
+                        (vacancy_json_id,)
+                    )
                     if cur.fetchone():
                         # Update all fields for changed record, including dimension keys
                         try:
                             cur.execute("""
-                                        UPDATE fact.vacancy
-                                        SET load_dttm = %s,
-                                            load_id   = %s,
-                                            model_id = %s,
-                                            title_id = %s,
-                                            level_id = %s,
-                                            employment_type_id = %s,
-                                            contract_type_id = %s,
-                                            company_id = %s,
-                                            company_industry_id = %s,
-                                            vacancy_site_id = %s,
-                                            vacancy_id = %s,
-                                            score = %s,
-                                            score_percentile = %s,
-                                            saved_date_id = %s,
-                                            parsed_date_id = %s,
-                                            file_created_date_id = %s,
-                                            file_updated_date_id = %s,
-                                            partition_key = %s
-                                        WHERE vacancy_json_id = %s
-                                        """, (
-                                            batch_ts, load_id,
-                                            model_id_dim, title_id, level_id, employment_type_id,
-                                            contract_type_id, company_id, company_industry_id,
-                                            vacancy_site_id, vacancy_id_dim,
-                                            score, score_percentile,
-                                            saved_date_id, parsed_date_id,
-                                            file_created_date_id, file_updated_date_id,
-                                            partition_key,
-                                            vacancy_json_id
-                                        ))
+                                UPDATE fact.vacancy
+                                SET load_dttm = %s,
+                                    load_id = %s,
+                                    model_id = %s,
+                                    title_id = %s,
+                                    level_id = %s,
+                                    employment_type_id = %s,
+                                    contract_type_id = %s,
+                                    company_id = %s,
+                                    company_industry_id = %s,
+                                    vacancy_site_id = %s,
+                                    vacancy_id = %s,
+                                    score = %s,
+                                    score_percentile = %s,
+                                    saved_date_id = %s,
+                                    parsed_date_id = %s,
+                                    file_created_date_id = %s,
+                                    file_updated_date_id = %s,
+                                    partition_key = %s,
+                                    version = %s,
+                                    modified_timestamp = %s
+                                WHERE vacancy_json_id = %s
+                            """, (
+                                batch_ts, load_id,
+                                model_id_dim, title_id, level_id,
+                                employment_type_id, contract_type_id,
+                                company_id, company_industry_id,
+                                vacancy_site_id, vacancy_id_dim,
+                                score, score_percentile,
+                                saved_date_id, parsed_date_id,
+                                file_created_date_id, file_updated_date_id,
+                                partition_key,
+                                VACANCY_VERSION, file_updated_dttm,
+                                vacancy_json_id
+                            ))
                             conn.commit()
                             updated += 1
                         except Exception as e:
@@ -358,23 +328,32 @@ def main():
                         # Insert new fact record
                         try:
                             cur.execute("""
-                                        INSERT INTO fact.vacancy (vacancy_json_id, saved_date_id, parsed_date_id,
-                                                                  file_created_date_id, file_updated_date_id,
-                                                                  model_id, title_id, level_id, employment_type_id,
-                                                                  contract_type_id, company_id, company_industry_id,
-                                                                  vacancy_site_id, vacancy_id,
-                                                                  score, score_percentile, load_dttm, load_id, source_id,
-                                                                  partition_key)
-                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                                %s)
-                                        """, (
-                                            vacancy_json_id, saved_date_id, parsed_date_id,
-                                            file_created_date_id, file_updated_date_id,
-                                            model_id_dim, title_id, level_id, employment_type_id,
-                                            contract_type_id, company_id, company_industry_id,
-                                            vacancy_site_id, vacancy_id_dim,
-                                            score, score_percentile, batch_ts, load_id, source_id, partition_key
-                                        ))
+                                INSERT INTO fact.vacancy (
+                                    vacancy_json_id, saved_date_id,
+                                    parsed_date_id, file_created_date_id,
+                                    file_updated_date_id, model_id, title_id,
+                                    level_id, employment_type_id,
+                                    contract_type_id, company_id,
+                                    company_industry_id, vacancy_site_id,
+                                    vacancy_id, score, score_percentile,
+                                    load_dttm, load_id, source_id,
+                                    partition_key, modified_timestamp, version
+                                ) VALUES (
+                                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                    %s, %s
+                                )
+                            """, (
+                                vacancy_json_id, saved_date_id, parsed_date_id,
+                                file_created_date_id, file_updated_date_id,
+                                model_id_dim, title_id, level_id,
+                                employment_type_id, contract_type_id,
+                                company_id, company_industry_id,
+                                vacancy_site_id, vacancy_id_dim,
+                                score, score_percentile, batch_ts, load_id,
+                                source_id, partition_key,
+                                datetime(1900, 1, 1, tzinfo=timezone.utc), 0
+                            ))
                             conn.commit()
                             inserted += 1
                         except Exception as e:
