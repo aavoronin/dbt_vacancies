@@ -47,6 +47,7 @@ OUTPUT FORMAT:
 - Precede each block with the exact relative file path (e.g., ### 📄 models/dim/my_model.sql or ### 📄 etl_script.py).
 - Output complete, runnable file contents. No diffs, no partial snippets.
 - Omit unchanged files entirely.
+- When database object has changed do add script that will update model implementation in the database (DDL). This should be run under dbt run --full-refresh 
 
 CODING STANDARDS:
 General:
