@@ -50,3 +50,23 @@ models:
         description: "Timestamp of the source file's last modification."
       - name: version
         description: "ETL processing version for the record."
+
+  - name: vacancy_to_skills
+    description: "Many-to-many fact linking vacancies to skills with proficiency levels."
+    columns:
+      - name: vacancy_to_skill_id
+        description: "Auto-incrementing surrogate ID."
+      - name: vacancy_fact_id
+        description: "FK to fact.vacancy (includes partition_key in FK)."
+      - name: skill_level_id
+        description: "FK to dim.skill_levels."
+      - name: skill_id
+        description: "FK to dim.skills."
+      - name: load_dttm
+        description: "Timestamp of the ETL batch that last modified this record."
+      - name: load_id
+        description: "Foreign key to the ETL batch load."
+      - name: source_id
+        description: "Foreign key to the data source."
+      - name: partition_key
+        description: "Partition key in YYYYMM format (matches fact.vacancy)."

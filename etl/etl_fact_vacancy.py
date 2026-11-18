@@ -5,7 +5,9 @@ from pathlib import Path
 import psycopg2
 
 BATCH_SIZE = 1024
-VACANCY_VERSION = 1
+VACANCY_VERSION = 2
+
+SKILL_LEVELS = ["expert", "required", "nice-to-have"]
 
 DIM_CONFIG = {
     "models": ("model_id", "model_name"),
@@ -40,7 +42,6 @@ def connect():
     )
 
 
-
 def ensure_default_dims(conn):
     # DML only: ensure default unknown records exist in dimension tables.
     # Table structures are managed by dbt.
@@ -51,6 +52,43 @@ def ensure_default_dims(conn):
                 VALUES (-1, '-')
                 ON CONFLICT ({id_col}) DO NOTHING
             """)
+
+
+def ensure_skill_levels(conn):
+    """Seed the fixed skill_level dimension with the 3 expected levels."""
+    with conn, conn.cursor() as cur:
+        for idx, name in enumerate(SKILL_LEVELS, start=1):
+            cur.execute("""
+                        INSERT INTO dim.skill_levels (skill_level_id, skill_level_name)
+                        VALUES (%s, %s) ON CONFLICT (skill_level_id) DO NOTHING
+                        """, (idx, name))
+
+
+def ensure_partition(cur, table_name, partition_key):
+    """Create partition for the given partition_key if it doesn't exist."""
+    partition_name = f"{table_name}_p{partition_key}"
+    cur.execute("""
+                SELECT 1
+                FROM pg_class c
+                         JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE c.relname = %s
+                  AND n.nspname = 'fact'
+                """, (partition_name,))
+
+    if not cur.fetchone():
+        year = partition_key // 100
+        month = partition_key % 100
+        next_month = month + 1
+        next_year = year
+        if next_month > 12:
+            next_month = 1
+            next_year += 1
+
+        cur.execute(f"""
+            CREATE TABLE fact.{partition_name}
+            PARTITION OF fact.{table_name}
+            FOR VALUES FROM ({partition_key}) TO ({next_year * 100 + next_month})
+        """)
 
 
 def get_source_id(conn):
@@ -87,6 +125,50 @@ def get_dim_key(cur, table, id_col, name_col, val, load_dttm, load_id, source_id
         return row[0]
 
     cur.execute(f"SELECT {id_col} FROM dim.{table} WHERE {name_col} = %s", (val,))
+    return cur.fetchone()[0]
+
+
+def get_skill_level_id(cur, level_name):
+    cur.execute(
+        "SELECT skill_level_id FROM dim.skill_levels "
+        "WHERE skill_level_name = %s",
+        (level_name,)
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def get_skill_id(cur, skill_name, load_dttm, load_id, source_id):
+    """Get or create a skill. Names are stored lowercase for case-insensitive match."""
+    if skill_name is None or str(skill_name).strip() == "":
+        return None
+
+    name_lower = str(skill_name).strip().lower()
+
+    cur.execute(
+        "SELECT skill_id FROM dim.skills WHERE skill_name = %s",
+        (name_lower,)
+    )
+    row = cur.fetchone()
+    if row:
+        return row[0]
+
+    cur.execute("""
+                INSERT INTO dim.skills
+                    (skill_id, skill_name, load_dttm, load_id, source_id)
+                VALUES ((SELECT COALESCE(MAX(skill_id), 0) + 1 FROM dim.skills),
+                        %s, %s, %s, %s) ON CONFLICT (skill_name) DO NOTHING
+        RETURNING skill_id
+                """, (name_lower, load_dttm, load_id, source_id))
+
+    row = cur.fetchone()
+    if row:
+        return row[0]
+
+    cur.execute(
+        "SELECT skill_id FROM dim.skills WHERE skill_name = %s",
+        (name_lower,)
+    )
     return cur.fetchone()[0]
 
 
@@ -172,6 +254,135 @@ def get_estimation_field(est1, est2, field_name):
         return None
 
 
+def extract_skills(j, est1=None, est2=None):
+    """
+    Extract skills from the first JSON object that carries any skill level key.
+
+    Search order: preferred estimation nested "json" (estimation2 first when
+    its model_id is valid), the other estimation nested "json", then the
+    top-level document.
+    Returns dict: {level_name: [lowercased skill names]}.
+    """
+    sources = []
+
+    nested2 = est2.get("json") if isinstance(est2, dict) else None
+    nested1 = est1.get("json") if isinstance(est1, dict) else None
+
+    model_id_2 = est2.get("model_id") if isinstance(est2, dict) else None
+    model_id_1 = est1.get("model_id") if isinstance(est1, dict) else None
+
+    def is_valid(mid):
+        return mid is not None and str(mid).lower() not in ("null", "none", "")
+
+    if is_valid(model_id_2):
+        sources.extend([nested2, nested1])
+    elif is_valid(model_id_1):
+        sources.extend([nested1, nested2])
+    else:
+        sources.extend([nested2, nested1])
+    sources.append(j)
+
+    container = {}
+    for src in sources:
+        if isinstance(src, dict) and any(k in src for k in SKILL_LEVELS):
+            container = src
+            break
+
+    result = {}
+    for level in SKILL_LEVELS:
+        raw = container.get(level, [])
+        if not isinstance(raw, list):
+            raw = []
+        result[level] = [
+            str(s).strip().lower()
+            for s in raw
+            if s is not None and str(s).strip()
+        ]
+    return result
+
+
+def get_existing_vacancy(cur, vacancy_json_id):
+    """Fetch the existing fact.vacancy row or None."""
+    cur.execute("""
+                SELECT vacancy_fact_id,
+                       partition_key,
+                       model_id,
+                       title_id,
+                       level_id,
+                       employment_type_id,
+                       contract_type_id,
+                       company_id,
+                       company_industry_id,
+                       vacancy_site_id,
+                       vacancy_id,
+                       score,
+                       score_percentile,
+                       saved_date_id,
+                       parsed_date_id,
+                       file_created_date_id,
+                       file_updated_date_id,
+                       version,
+                       modified_timestamp
+                FROM fact.vacancy
+                WHERE vacancy_json_id = %s
+                """, (vacancy_json_id,))
+    return cur.fetchone()
+
+
+def get_existing_skills(cur, vacancy_fact_id, partition_key):
+    cur.execute("""
+                SELECT skill_level_id, skill_id
+                FROM fact.vacancy_to_skills
+                WHERE vacancy_fact_id = %s
+                  AND partition_key = %s
+                """, (vacancy_fact_id, partition_key))
+    return set(tuple(r) for r in cur.fetchall())
+
+
+def apply_skill_changes(cur, vacancy_fact_id, partition_key,
+                        new_skills, batch_ts, load_id, source_id):
+    """
+    Diff existing vs new skills and apply inserts/deletes.
+    Returns True if any change was made.
+    """
+    existing = get_existing_skills(cur, vacancy_fact_id, partition_key)
+    to_insert = new_skills - existing
+    to_delete = existing - new_skills
+
+    for skill_level_id, skill_id in to_delete:
+        cur.execute("""
+                    DELETE
+                    FROM fact.vacancy_to_skills
+                    WHERE vacancy_fact_id = %s
+                      AND skill_level_id = %s
+                      AND skill_id = %s
+                      AND partition_key = %s
+                    """, (vacancy_fact_id, skill_level_id, skill_id, partition_key))
+
+    for skill_level_id, skill_id in to_insert:
+        cur.execute("""
+                    INSERT INTO fact.vacancy_to_skills
+                    (vacancy_fact_id, skill_level_id, skill_id,
+                     load_dttm, load_id, source_id, partition_key)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (vacancy_fact_id, skill_level_id, skill_id,
+                          batch_ts, load_id, source_id, partition_key))
+
+    return bool(to_insert or to_delete)
+
+
+def insert_new_skills(cur, vacancy_fact_id, partition_key,
+                      new_skills, batch_ts, load_id, source_id):
+    for skill_level_id, skill_id in new_skills:
+        cur.execute("""
+                    INSERT INTO fact.vacancy_to_skills
+                    (vacancy_fact_id, skill_level_id, skill_id,
+                     load_dttm, load_id, source_id, partition_key)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (vacancy_fact_id, skill_level_id, skill_id,
+                          batch_ts, load_id, source_id, partition_key))
+
+
 def chunked(items, size):
     for i in range(0, len(items), size):
         yield items[i:i + size]
@@ -181,22 +392,26 @@ def main():
     conn = connect()
     try:
         ensure_default_dims(conn)
+        ensure_skill_levels(conn)
         source_id = get_source_id(conn)
 
         with conn.cursor() as cur:
             # Filter out records that are already up-to-date to save ETL time
             cur.execute("""
-                SELECT vj.vacancy_json_id, vj."json", 
-                       vj.file_created_dttm, vj.file_updated_dttm
-                FROM stage.vacancy_jsons vj
-                LEFT JOIN fact.vacancy fv 
-                  ON vj.vacancy_json_id = fv.vacancy_json_id
-                WHERE fv.vacancy_json_id IS NULL
-                   OR fv.version < %s
-                   OR fv.modified_timestamp IS DISTINCT 
-                      FROM vj.file_updated_dttm
-                ORDER BY (vj."json"::json ->> 'saved_date') ASC
-            """, (VACANCY_VERSION,))
+                        SELECT vj.vacancy_json_id,
+                               vj."json",
+                               vj.file_created_dttm,
+                               vj.file_updated_dttm
+                        FROM stage.vacancy_jsons vj
+                                 LEFT JOIN fact.vacancy fv
+                                           ON vj.vacancy_json_id = fv.vacancy_json_id
+                        WHERE fv.vacancy_json_id IS NULL
+                           OR fv.version IS NULL
+                           OR fv.version < %s
+                           OR fv.modified_timestamp IS DISTINCT
+                        FROM vj.file_updated_dttm
+                        ORDER BY (vj."json"::json ->> 'saved_date') ASC
+                        """, (VACANCY_VERSION,))
             rows = cur.fetchall()
 
         print(f"Total records to process: {len(rows)}")
@@ -275,85 +490,165 @@ def main():
                     file_updated_date_id = get_date_id(str(file_updated_dttm) if file_updated_dttm else None)
                     partition_key = get_partition_key(saved_date_str)
 
-                    # Check if record exists
-                    cur.execute(
-                        "SELECT 1 FROM fact.vacancy WHERE vacancy_json_id = %s",
-                        (vacancy_json_id,)
-                    )
-                    if cur.fetchone():
-                        # Update all fields for changed record, including dimension keys
+                    # Disregard vacancies with no valid saved_date
+                    if partition_key == -1:
+                        continue
+
+                    # Ensure partitions exist for this partition_key
+                    ensure_partition(cur, "vacancy", partition_key)
+                    ensure_partition(cur, "vacancy_to_skills", partition_key)
+
+                    # Build the new set of (skill_level_id, skill_id) tuples
+                    new_skills = set()
+                    skills_data = extract_skills(j, est1, est2)
+                    for level_name, skill_names in skills_data.items():
+                        sl_id = get_skill_level_id(cur, level_name)
+                        if sl_id is None:
+                            continue
+                        for s_name in skill_names:
+                            s_id = get_skill_id(
+                                cur, s_name, batch_ts, load_id, source_id
+                            )
+                            if s_id is not None:
+                                new_skills.add((sl_id, s_id))
+
+                    existing = get_existing_vacancy(cur, vacancy_json_id)
+
+                    if existing:
+                        (vacancy_fact_id, existing_pk,
+                         ex_model, ex_title, ex_level,
+                         ex_employment, ex_contract,
+                         ex_company, ex_industry,
+                         ex_site, ex_vacancy_id,
+                         ex_score, ex_percentile,
+                         ex_saved, ex_parsed,
+                         ex_fcreated, ex_fupdated,
+                         ex_version, ex_modified) = existing
+
+                        # A version bump alone makes the record a candidate:
+                        # skills may not have been parsed at all before.
+                        version_changed = (
+                                ex_version is None
+                                or ex_version != VACANCY_VERSION
+                        )
+                        timestamp_changed = ex_modified != file_updated_dttm
+
+                        # Detect whether any non-system field changed
+                        fields_changed = (
+                                existing_pk != partition_key
+                                or ex_model != model_id_dim
+                                or ex_title != title_id
+                                or ex_level != level_id
+                                or ex_employment != employment_type_id
+                                or ex_contract != contract_type_id
+                                or ex_company != company_id
+                                or ex_industry != company_industry_id
+                                or ex_site != vacancy_site_id
+                                or ex_vacancy_id != vacancy_id_dim
+                                or (ex_score is None) != (score is None)
+                                or (ex_score is not None and float(ex_score) != float(score))
+                                or (ex_percentile is None) != (score_percentile is None)
+                                or (ex_percentile is not None
+                                    and float(ex_percentile) != float(score_percentile))
+                                or ex_saved != saved_date_id
+                                or ex_parsed != parsed_date_id
+                                or ex_fcreated != file_created_date_id
+                                or ex_fupdated != file_updated_date_id
+                        )
+
+                        existing_skills = get_existing_skills(
+                            cur, vacancy_fact_id, existing_pk
+                        )
+                        skills_changed = existing_skills != new_skills
+
+                        if not (version_changed or timestamp_changed
+                                or fields_changed or skills_changed):
+                            unchanged += 1
+                            continue
+
                         try:
                             cur.execute("""
-                                UPDATE fact.vacancy
-                                SET load_dttm = %s,
-                                    load_id = %s,
-                                    model_id = %s,
-                                    title_id = %s,
-                                    level_id = %s,
-                                    employment_type_id = %s,
-                                    contract_type_id = %s,
-                                    company_id = %s,
-                                    company_industry_id = %s,
-                                    vacancy_site_id = %s,
-                                    vacancy_id = %s,
-                                    score = %s,
-                                    score_percentile = %s,
-                                    saved_date_id = %s,
-                                    parsed_date_id = %s,
-                                    file_created_date_id = %s,
-                                    file_updated_date_id = %s,
-                                    partition_key = %s,
-                                    version = %s,
-                                    modified_timestamp = %s
-                                WHERE vacancy_json_id = %s
-                            """, (
-                                batch_ts, load_id,
-                                model_id_dim, title_id, level_id,
-                                employment_type_id, contract_type_id,
-                                company_id, company_industry_id,
-                                vacancy_site_id, vacancy_id_dim,
-                                score, score_percentile,
-                                saved_date_id, parsed_date_id,
-                                file_created_date_id, file_updated_date_id,
-                                partition_key,
-                                VACANCY_VERSION, file_updated_dttm,
-                                vacancy_json_id
-                            ))
+                                        UPDATE fact.vacancy
+                                        SET load_dttm            = %s,
+                                            load_id              = %s,
+                                            source_id            = %s,
+                                            model_id             = %s,
+                                            title_id             = %s,
+                                            level_id             = %s,
+                                            employment_type_id   = %s,
+                                            contract_type_id     = %s,
+                                            company_id           = %s,
+                                            company_industry_id  = %s,
+                                            vacancy_site_id      = %s,
+                                            vacancy_id           = %s,
+                                            score                = %s,
+                                            score_percentile     = %s,
+                                            saved_date_id        = %s,
+                                            parsed_date_id       = %s,
+                                            file_created_date_id = %s,
+                                            file_updated_date_id = %s,
+                                            partition_key        = %s,
+                                            version              = %s,
+                                            modified_timestamp   = %s
+                                        WHERE vacancy_fact_id = %s
+                                          AND partition_key = %s
+                                        """, (
+                                            batch_ts, load_id, source_id,
+                                            model_id_dim, title_id, level_id,
+                                            employment_type_id, contract_type_id,
+                                            company_id, company_industry_id,
+                                            vacancy_site_id, vacancy_id_dim,
+                                            score, score_percentile,
+                                            saved_date_id, parsed_date_id,
+                                            file_created_date_id, file_updated_date_id,
+                                            partition_key,
+                                            VACANCY_VERSION, file_updated_dttm,
+                                            vacancy_fact_id, existing_pk
+                                        ))
+
+                            apply_skill_changes(
+                                cur, vacancy_fact_id, existing_pk,
+                                new_skills, batch_ts, load_id, source_id
+                            )
+
                             conn.commit()
                             updated += 1
                         except Exception as e:
                             print(f"ERROR updating vacancy_json_id={vacancy_json_id}: {e}")
                             conn.rollback()
                     else:
-                        # Insert new fact record
                         try:
                             cur.execute("""
-                                INSERT INTO fact.vacancy (
-                                    vacancy_json_id, saved_date_id,
-                                    parsed_date_id, file_created_date_id,
-                                    file_updated_date_id, model_id, title_id,
-                                    level_id, employment_type_id,
-                                    contract_type_id, company_id,
-                                    company_industry_id, vacancy_site_id,
-                                    vacancy_id, score, score_percentile,
-                                    load_dttm, load_id, source_id,
-                                    partition_key, modified_timestamp, version
-                                ) VALUES (
-                                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                    %s, %s
-                                )
-                            """, (
-                                vacancy_json_id, saved_date_id, parsed_date_id,
-                                file_created_date_id, file_updated_date_id,
-                                model_id_dim, title_id, level_id,
-                                employment_type_id, contract_type_id,
-                                company_id, company_industry_id,
-                                vacancy_site_id, vacancy_id_dim,
-                                score, score_percentile, batch_ts, load_id,
-                                source_id, partition_key,
-                                datetime(1900, 1, 1, tzinfo=timezone.utc), 0
-                            ))
+                                        INSERT INTO fact.vacancy (vacancy_json_id, saved_date_id,
+                                                                  parsed_date_id, file_created_date_id,
+                                                                  file_updated_date_id, model_id, title_id,
+                                                                  level_id, employment_type_id,
+                                                                  contract_type_id, company_id,
+                                                                  company_industry_id, vacancy_site_id,
+                                                                  vacancy_id, score, score_percentile,
+                                                                  load_dttm, load_id, source_id,
+                                                                  partition_key, modified_timestamp, version)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                                %s, %s) RETURNING vacancy_fact_id, partition_key
+                                        """, (
+                                            vacancy_json_id, saved_date_id, parsed_date_id,
+                                            file_created_date_id, file_updated_date_id,
+                                            model_id_dim, title_id, level_id,
+                                            employment_type_id, contract_type_id,
+                                            company_id, company_industry_id,
+                                            vacancy_site_id, vacancy_id_dim,
+                                            score, score_percentile, batch_ts, load_id,
+                                            source_id, partition_key,
+                                            datetime(1900, 1, 1, tzinfo=timezone.utc), 0
+                                        ))
+                            new_vacancy_fact_id, new_pk = cur.fetchone()
+
+                            insert_new_skills(
+                                cur, new_vacancy_fact_id, new_pk,
+                                new_skills, batch_ts, load_id, source_id
+                            )
+
                             conn.commit()
                             inserted += 1
                         except Exception as e:

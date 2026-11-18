@@ -72,3 +72,19 @@ models:
         description: "Surrogate ID for the vacancy identifier."
       - name: vacancy_id_name
         description: "The concatenated Site_JobId string."
+
+  - name: skills
+    description: "Dimension table for technical skills (stored lowercase)."
+    columns:
+      - name: skill_id
+        description: "Surrogate ID for the skill."
+      - name: skill_name
+        description: "The skill name (lowercase, unique)."
+
+  - name: skill_levels
+    description: "Fixed dimension of skill proficiency levels."
+    columns:
+      - name: skill_level_id
+        description: "Surrogate ID for the skill level."
+      - name: skill_level_name
+        description: "The skill level name (expert, required, nice-to-have)."
