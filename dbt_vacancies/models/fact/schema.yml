@@ -70,3 +70,57 @@ models:
         description: "Foreign key to the data source."
       - name: partition_key
         description: "Partition key in YYYYMM format (matches fact.vacancy)."
+
+  - name: vacancy_to_employer_countries
+    description: "Many-to-many fact linking vacancies to employer countries."
+    columns:
+      - name: vacancy_to_country_id
+        description: "Auto-incrementing surrogate ID."
+      - name: vacancy_fact_id
+        description: "FK to fact.vacancy (includes partition_key in FK)."
+      - name: country_id
+        description: "FK to dim.employer_countries."
+      - name: load_dttm
+        description: "Timestamp of the ETL batch that last modified this record."
+      - name: load_id
+        description: "Foreign key to the ETL batch load."
+      - name: source_id
+        description: "Foreign key to the data source."
+      - name: partition_key
+        description: "Partition key in YYYYMM format (matches fact.vacancy)."
+
+  - name: vacancy_to_required_languages
+    description: "Many-to-many fact linking vacancies to required languages."
+    columns:
+      - name: vacancy_to_language_id
+        description: "Auto-incrementing surrogate ID."
+      - name: vacancy_fact_id
+        description: "FK to fact.vacancy (includes partition_key in FK)."
+      - name: language_id
+        description: "FK to dim.required_languages."
+      - name: load_dttm
+        description: "Timestamp of the ETL batch that last modified this record."
+      - name: load_id
+        description: "Foreign key to the ETL batch load."
+      - name: source_id
+        description: "Foreign key to the data source."
+      - name: partition_key
+        description: "Partition key in YYYYMM format (matches fact.vacancy)."
+
+  - name: vacancy_to_certifications
+    description: "Many-to-many fact linking vacancies to required certifications."
+    columns:
+      - name: vacancy_to_certification_id
+        description: "Auto-incrementing surrogate ID."
+      - name: vacancy_fact_id
+        description: "FK to fact.vacancy (includes partition_key in FK)."
+      - name: certification_id
+        description: "FK to dim.certifications."
+      - name: load_dttm
+        description: "Timestamp of the ETL batch that last modified this record."
+      - name: load_id
+        description: "Foreign key to the ETL batch load."
+      - name: source_id
+        description: "Foreign key to the data source."
+      - name: partition_key
+        description: "Partition key in YYYYMM format (matches fact.vacancy)."

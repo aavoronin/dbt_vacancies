@@ -88,3 +88,27 @@ models:
         description: "Surrogate ID for the skill level."
       - name: skill_level_name
         description: "The skill level name (expert, required, nice-to-have)."
+
+  - name: employer_countries
+    description: "Dimension table for employer countries (stored lowercase)."
+    columns:
+      - name: country_id
+        description: "Surrogate ID for the country."
+      - name: country_name
+        description: "The country name (lowercase, unique)."
+
+  - name: required_languages
+    description: "Dimension table for required languages (stored lowercase)."
+    columns:
+      - name: language_id
+        description: "Surrogate ID for the language."
+      - name: language_name
+        description: "The language name (lowercase, unique)."
+
+  - name: certifications
+    description: "Dimension table for required certifications (stored lowercase)."
+    columns:
+      - name: certification_id
+        description: "Surrogate ID for the certification."
+      - name: certification_name
+        description: "The certification name (lowercase, unique)."

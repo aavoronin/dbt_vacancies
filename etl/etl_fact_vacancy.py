@@ -5,7 +5,7 @@ from pathlib import Path
 import psycopg2
 
 BATCH_SIZE = 1024
-VACANCY_VERSION = 2
+VACANCY_VERSION = 3
 
 SKILL_LEVELS = ["expert", "required", "nice-to-have"]
 
@@ -95,12 +95,15 @@ def get_source_id(conn):
     with conn, conn.cursor() as cur:
         cur.execute("""
                     INSERT INTO stage.sources (source_name)
-                    VALUES ('stage.vacancy_jsons') ON CONFLICT (source_name) DO NOTHING RETURNING source_id
+                    VALUES ('stage.vacancy_jsons') ON CONFLICT (source_name) DO NOTHING 
+            RETURNING source_id
                     """)
         row = cur.fetchone()
         if row:
             return row[0]
-        cur.execute("SELECT source_id FROM stage.sources WHERE source_name = 'stage.vacancy_jsons'")
+        cur.execute(
+            "SELECT source_id FROM stage.sources WHERE source_name = 'stage.vacancy_jsons'"
+        )
         return cur.fetchone()[0]
 
 
@@ -130,8 +133,7 @@ def get_dim_key(cur, table, id_col, name_col, val, load_dttm, load_id, source_id
 
 def get_skill_level_id(cur, level_name):
     cur.execute(
-        "SELECT skill_level_id FROM dim.skill_levels "
-        "WHERE skill_level_name = %s",
+        "SELECT skill_level_id FROM dim.skill_levels WHERE skill_level_name = %s",
         (level_name,)
     )
     row = cur.fetchone()
@@ -145,10 +147,7 @@ def get_skill_id(cur, skill_name, load_dttm, load_id, source_id):
 
     name_lower = str(skill_name).strip().lower()
 
-    cur.execute(
-        "SELECT skill_id FROM dim.skills WHERE skill_name = %s",
-        (name_lower,)
-    )
+    cur.execute("SELECT skill_id FROM dim.skills WHERE skill_name = %s", (name_lower,))
     row = cur.fetchone()
     if row:
         return row[0]
@@ -165,10 +164,34 @@ def get_skill_id(cur, skill_name, load_dttm, load_id, source_id):
     if row:
         return row[0]
 
-    cur.execute(
-        "SELECT skill_id FROM dim.skills WHERE skill_name = %s",
-        (name_lower,)
-    )
+    cur.execute("SELECT skill_id FROM dim.skills WHERE skill_name = %s", (name_lower,))
+    return cur.fetchone()[0]
+
+
+def get_m2m_dim_id(cur, table, id_col, name_col, val, load_dttm, load_id, source_id):
+    """Generic helper for many-to-many dimensions (countries, languages, certs)."""
+    if val is None or str(val).strip() == "":
+        return None
+
+    name_lower = str(val).strip().lower()
+
+    cur.execute(f"SELECT {id_col} FROM dim.{table} WHERE {name_col} = %s", (name_lower,))
+    row = cur.fetchone()
+    if row:
+        return row[0]
+
+    cur.execute(f"""
+        INSERT INTO dim.{table} ({id_col}, {name_col}, load_dttm, load_id, source_id)
+        VALUES ((SELECT COALESCE(MAX({id_col}), 0) + 1 FROM dim.{table}), %s, %s, %s, %s)
+        ON CONFLICT ({name_col}) DO NOTHING
+        RETURNING {id_col}
+    """, (name_lower, load_dttm, load_id, source_id))
+
+    row = cur.fetchone()
+    if row:
+        return row[0]
+
+    cur.execute(f"SELECT {id_col} FROM dim.{table} WHERE {name_col} = %s", (name_lower,))
     return cur.fetchone()[0]
 
 
@@ -195,79 +218,56 @@ def get_partition_key(dt_str):
 def get_estimation_field(est1, est2, field_name):
     """
     Extract a field from the preferred estimation (estimation2 if valid, else estimation1).
-
     For model_id, score, score_percentile: look at top level of estimation object.
-    For all other fields (Title, Level, etc.): look inside the nested "json" object.
-
+    For all other fields: look inside the nested "json" object.
     Returns the field value as a string, or None if missing/invalid.
     """
-    # Determine which estimation to use based on model_id validity
     model_id_2 = est2.get("model_id") if est2 and isinstance(est2, dict) else None
     model_id_1 = est1.get("model_id") if est1 and isinstance(est1, dict) else None
 
     use_est2 = model_id_2 is not None and str(model_id_2).lower() not in ("null", "none", "")
     use_est1 = model_id_1 is not None and str(model_id_1).lower() not in ("null", "none", "")
 
-    # If neither estimation is valid, return None
     if not use_est2 and not use_est1:
         return None
 
     try:
-        # For model_id, score, score_percentile: look at top level of estimation
         if field_name in ("model_id", "score", "score_percentile"):
             if use_est2:
                 val = est2.get(field_name)
             else:
                 val = est1.get(field_name)
         else:
-            # For all other fields: look inside the nested "json" object
-            # Get the nested json object from the preferred estimation
             if use_est2:
                 nested_json = est2.get("json") if est2 else None
             else:
                 nested_json = est1.get("json") if est1 else None
 
-            # Ensure nested_json is a dict
             if not isinstance(nested_json, dict):
                 nested_json = {}
 
             val = nested_json.get(field_name)
 
-        # Handle different value types
         if val is None:
             return None
 
-        # If it's a list or tuple, take the first element
         if isinstance(val, (list, tuple)):
             return str(val[0]) if val else None
 
-        # If it's a string, return as-is
         if isinstance(val, str):
             return val.strip() if val.strip() else None
 
-        # For other types (int, float, bool), convert to string
         return str(val)
-
     except Exception as e:
-        # Log the error for debugging
         print(f"Warning: Failed to extract {field_name}: {e}")
         return None
 
 
-def extract_skills(j, est1=None, est2=None):
+def get_preferred_nested_json(est1, est2, top_level_j):
     """
-    Extract skills from the first JSON object that carries any skill level key.
-
-    Search order: preferred estimation nested "json" (estimation2 first when
-    its model_id is valid), the other estimation nested "json", then the
-    top-level document.
-    Returns dict: {level_name: [lowercased skill names]}.
+    Select the nested 'json' object from the preferred estimation based on
+    model_id validity, falling back to the top-level JSON if neither is valid.
     """
-    sources = []
-
-    nested2 = est2.get("json") if isinstance(est2, dict) else None
-    nested1 = est1.get("json") if isinstance(est1, dict) else None
-
     model_id_2 = est2.get("model_id") if isinstance(est2, dict) else None
     model_id_1 = est1.get("model_id") if isinstance(est1, dict) else None
 
@@ -275,22 +275,23 @@ def extract_skills(j, est1=None, est2=None):
         return mid is not None and str(mid).lower() not in ("null", "none", "")
 
     if is_valid(model_id_2):
-        sources.extend([nested2, nested1])
-    elif is_valid(model_id_1):
-        sources.extend([nested1, nested2])
-    else:
-        sources.extend([nested2, nested1])
-    sources.append(j)
+        nested = est2.get("json")
+        if isinstance(nested, dict):
+            return nested
+    if is_valid(model_id_1):
+        nested = est1.get("json")
+        if isinstance(nested, dict):
+            return nested
 
-    container = {}
-    for src in sources:
-        if isinstance(src, dict) and any(k in src for k in SKILL_LEVELS):
-            container = src
-            break
+    return top_level_j if isinstance(top_level_j, dict) else {}
 
+
+def extract_skills(j, est1, est2):
+    """Extract skills from the preferred estimation's nested json."""
+    preferred_json = get_preferred_nested_json(est1, est2, j)
     result = {}
     for level in SKILL_LEVELS:
-        raw = container.get(level, [])
+        raw = preferred_json.get(level, [])
         if not isinstance(raw, list):
             raw = []
         result[level] = [
@@ -299,6 +300,28 @@ def extract_skills(j, est1=None, est2=None):
             if s is not None and str(s).strip()
         ]
     return result
+
+
+def extract_m2m_lists(j, est1, est2):
+    """Extract EmployerCountry, RequiredLanguages, CertificationsRequired."""
+    preferred_json = get_preferred_nested_json(est1, est2, j)
+
+    countries = [
+        str(c).strip().lower()
+        for c in preferred_json.get("EmployerCountry", [])
+        if c and str(c).strip()
+    ]
+    languages = [
+        str(l).strip().lower()
+        for l in preferred_json.get("RequiredLanguages", [])
+        if l and str(l).strip()
+    ]
+    certifications = [
+        str(c).strip().lower()
+        for c in preferred_json.get("CertificationsRequired", [])
+        if c and str(c).strip()
+    ]
+    return countries, languages, certifications
 
 
 def get_existing_vacancy(cur, vacancy_json_id):
@@ -329,58 +352,35 @@ def get_existing_vacancy(cur, vacancy_json_id):
     return cur.fetchone()
 
 
-def get_existing_skills(cur, vacancy_fact_id, partition_key):
-    cur.execute("""
-                SELECT skill_level_id, skill_id
-                FROM fact.vacancy_to_skills
-                WHERE vacancy_fact_id = %s
-                  AND partition_key = %s
-                """, (vacancy_fact_id, partition_key))
-    return set(tuple(r) for r in cur.fetchall())
+def get_existing_m2m(cur, fact_table, vacancy_fact_id, partition_key, dim_id_col):
+    cur.execute(f"""
+        SELECT {dim_id_col}
+        FROM fact.{fact_table}
+        WHERE vacancy_fact_id = %s AND partition_key = %s
+    """, (vacancy_fact_id, partition_key))
+    return set(r[0] for r in cur.fetchall())
 
 
-def apply_skill_changes(cur, vacancy_fact_id, partition_key,
-                        new_skills, batch_ts, load_id, source_id):
-    """
-    Diff existing vs new skills and apply inserts/deletes.
-    Returns True if any change was made.
-    """
-    existing = get_existing_skills(cur, vacancy_fact_id, partition_key)
-    to_insert = new_skills - existing
-    to_delete = existing - new_skills
+def apply_m2m_changes(cur, fact_table, vacancy_fact_id, partition_key,
+                      new_ids, batch_ts, load_id, source_id, dim_id_col):
+    existing = get_existing_m2m(cur, fact_table, vacancy_fact_id, partition_key, dim_id_col)
+    to_insert = new_ids - existing
+    to_delete = existing - new_ids
 
-    for skill_level_id, skill_id in to_delete:
-        cur.execute("""
-                    DELETE
-                    FROM fact.vacancy_to_skills
-                    WHERE vacancy_fact_id = %s
-                      AND skill_level_id = %s
-                      AND skill_id = %s
-                      AND partition_key = %s
-                    """, (vacancy_fact_id, skill_level_id, skill_id, partition_key))
+    for dim_id in to_delete:
+        cur.execute(f"""
+            DELETE FROM fact.{fact_table}
+            WHERE vacancy_fact_id = %s AND {dim_id_col} = %s AND partition_key = %s
+        """, (vacancy_fact_id, dim_id, partition_key))
 
-    for skill_level_id, skill_id in to_insert:
-        cur.execute("""
-                    INSERT INTO fact.vacancy_to_skills
-                    (vacancy_fact_id, skill_level_id, skill_id,
-                     load_dttm, load_id, source_id, partition_key)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """, (vacancy_fact_id, skill_level_id, skill_id,
-                          batch_ts, load_id, source_id, partition_key))
+    for dim_id in to_insert:
+        cur.execute(f"""
+            INSERT INTO fact.{fact_table}
+                (vacancy_fact_id, {dim_id_col}, load_dttm, load_id, source_id, partition_key)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (vacancy_fact_id, dim_id, batch_ts, load_id, source_id, partition_key))
 
     return bool(to_insert or to_delete)
-
-
-def insert_new_skills(cur, vacancy_fact_id, partition_key,
-                      new_skills, batch_ts, load_id, source_id):
-    for skill_level_id, skill_id in new_skills:
-        cur.execute("""
-                    INSERT INTO fact.vacancy_to_skills
-                    (vacancy_fact_id, skill_level_id, skill_id,
-                     load_dttm, load_id, source_id, partition_key)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """, (vacancy_fact_id, skill_level_id, skill_id,
-                          batch_ts, load_id, source_id, partition_key))
 
 
 def chunked(items, size):
@@ -396,15 +396,10 @@ def main():
         source_id = get_source_id(conn)
 
         with conn.cursor() as cur:
-            # Filter out records that are already up-to-date to save ETL time
             cur.execute("""
-                        SELECT vj.vacancy_json_id,
-                               vj."json",
-                               vj.file_created_dttm,
-                               vj.file_updated_dttm
+                        SELECT vj.vacancy_json_id, vj."json", vj.file_created_dttm, vj.file_updated_dttm
                         FROM stage.vacancy_jsons vj
-                                 LEFT JOIN fact.vacancy fv
-                                           ON vj.vacancy_json_id = fv.vacancy_json_id
+                                 LEFT JOIN fact.vacancy fv ON vj.vacancy_json_id = fv.vacancy_json_id
                         WHERE fv.vacancy_json_id IS NULL
                            OR fv.version IS NULL
                            OR fv.version < %s
@@ -439,10 +434,9 @@ def main():
                 file_created_dttm = row[2]
                 file_updated_dttm = row[3]
 
-                est1 = j.get("estimation1")
-                est2 = j.get("estimation2")
+                est1 = j.get("estimation1") or {}
+                est2 = j.get("estimation2") or {}
 
-                # Extract fields from the preferred estimation
                 model_id = get_estimation_field(est1, est2, "model_id")
                 title = get_estimation_field(est1, est2, "Title")
                 level = get_estimation_field(est1, est2, "Level")
@@ -452,15 +446,12 @@ def main():
                 company_industry = get_estimation_field(est1, est2, "CompanyIndustry")
                 vacancy_site = get_estimation_field(est1, est2, "VacancySite")
                 job_id = get_estimation_field(est1, est2, "JobId")
-
                 score = get_estimation_field(est1, est2, "score")
                 score_percentile = get_estimation_field(est1, est2, "score_percentile")
 
-                # Create vacancy_id by concatenating VacancySite and JobId
                 vacancy_id_str = f"{vacancy_site or 'UNKNOWN'}_{job_id or 'UNKNOWN'}"
 
                 with conn, conn.cursor() as cur:
-                    # Get or create dimension keys
                     model_id_dim = get_dim_key(cur, "models", "model_id", "model_name", model_id, batch_ts, load_id,
                                                source_id)
                     title_id = get_dim_key(cur, "titles", "title_id", "title_name", title, batch_ts, load_id, source_id)
@@ -480,7 +471,6 @@ def main():
                     vacancy_id_dim = get_dim_key(cur, "vacancy_ids", "vacancy_id", "vacancy_id_name", vacancy_id_str,
                                                  batch_ts, load_id, source_id)
 
-                    # Extract date fields
                     saved_date_str = j.get("saved_date")
                     parsed_date_str = j.get("parsed_date")
 
@@ -490,15 +480,16 @@ def main():
                     file_updated_date_id = get_date_id(str(file_updated_dttm) if file_updated_dttm else None)
                     partition_key = get_partition_key(saved_date_str)
 
-                    # Disregard vacancies with no valid saved_date
                     if partition_key == -1:
                         continue
 
-                    # Ensure partitions exist for this partition_key
                     ensure_partition(cur, "vacancy", partition_key)
                     ensure_partition(cur, "vacancy_to_skills", partition_key)
+                    ensure_partition(cur, "vacancy_to_employer_countries", partition_key)
+                    ensure_partition(cur, "vacancy_to_required_languages", partition_key)
+                    ensure_partition(cur, "vacancy_to_certifications", partition_key)
 
-                    # Build the new set of (skill_level_id, skill_id) tuples
+                    # Skills
                     new_skills = set()
                     skills_data = extract_skills(j, est1, est2)
                     for level_name, skill_names in skills_data.items():
@@ -506,63 +497,84 @@ def main():
                         if sl_id is None:
                             continue
                         for s_name in skill_names:
-                            s_id = get_skill_id(
-                                cur, s_name, batch_ts, load_id, source_id
-                            )
+                            s_id = get_skill_id(cur, s_name, batch_ts, load_id, source_id)
                             if s_id is not None:
                                 new_skills.add((sl_id, s_id))
+
+                    # M2M Dimensions
+                    countries, languages, certifications = extract_m2m_lists(j, est1, est2)
+
+                    new_countries = set()
+                    for c in countries:
+                        c_id = get_m2m_dim_id(cur, "employer_countries", "country_id", "country_name", c, batch_ts,
+                                              load_id, source_id)
+                        if c_id: new_countries.add(c_id)
+
+                    new_languages = set()
+                    for l in languages:
+                        l_id = get_m2m_dim_id(cur, "required_languages", "language_id", "language_name", l, batch_ts,
+                                              load_id, source_id)
+                        if l_id: new_languages.add(l_id)
+
+                    new_certifications = set()
+                    for cert in certifications:
+                        cert_id = get_m2m_dim_id(cur, "certifications", "certification_id", "certification_name", cert,
+                                                 batch_ts, load_id, source_id)
+                        if cert_id: new_certifications.add(cert_id)
 
                     existing = get_existing_vacancy(cur, vacancy_json_id)
 
                     if existing:
-                        (vacancy_fact_id, existing_pk,
-                         ex_model, ex_title, ex_level,
-                         ex_employment, ex_contract,
-                         ex_company, ex_industry,
-                         ex_site, ex_vacancy_id,
-                         ex_score, ex_percentile,
-                         ex_saved, ex_parsed,
-                         ex_fcreated, ex_fupdated,
-                         ex_version, ex_modified) = existing
+                        (vacancy_fact_id, existing_pk, ex_model, ex_title, ex_level,
+                         ex_employment, ex_contract, ex_company, ex_industry, ex_site,
+                         ex_vacancy_id, ex_score, ex_percentile, ex_saved, ex_parsed,
+                         ex_fcreated, ex_fupdated, ex_version, ex_modified) = existing
 
-                        # A version bump alone makes the record a candidate:
-                        # skills may not have been parsed at all before.
-                        version_changed = (
-                                ex_version is None
-                                or ex_version != VACANCY_VERSION
-                        )
+                        version_changed = ex_version is None or ex_version != VACANCY_VERSION
                         timestamp_changed = ex_modified != file_updated_dttm
 
-                        # Detect whether any non-system field changed
                         fields_changed = (
-                                existing_pk != partition_key
-                                or ex_model != model_id_dim
-                                or ex_title != title_id
-                                or ex_level != level_id
-                                or ex_employment != employment_type_id
-                                or ex_contract != contract_type_id
-                                or ex_company != company_id
-                                or ex_industry != company_industry_id
-                                or ex_site != vacancy_site_id
-                                or ex_vacancy_id != vacancy_id_dim
-                                or (ex_score is None) != (score is None)
-                                or (ex_score is not None and float(ex_score) != float(score))
-                                or (ex_percentile is None) != (score_percentile is None)
-                                or (ex_percentile is not None
-                                    and float(ex_percentile) != float(score_percentile))
-                                or ex_saved != saved_date_id
-                                or ex_parsed != parsed_date_id
-                                or ex_fcreated != file_created_date_id
-                                or ex_fupdated != file_updated_date_id
+                                existing_pk != partition_key or ex_model != model_id_dim or
+                                ex_title != title_id or ex_level != level_id or
+                                ex_employment != employment_type_id or ex_contract != contract_type_id or
+                                ex_company != company_id or ex_industry != company_industry_id or
+                                ex_site != vacancy_site_id or ex_vacancy_id != vacancy_id_dim or
+                                (ex_score is None) != (score is None) or
+                                (ex_score is not None and float(ex_score) != float(score)) or
+                                (ex_percentile is None) != (score_percentile is None) or
+                                (ex_percentile is not None and float(ex_percentile) != float(score_percentile)) or
+                                ex_saved != saved_date_id or ex_parsed != parsed_date_id or
+                                ex_fcreated != file_created_date_id or ex_fupdated != file_updated_date_id
                         )
 
-                        existing_skills = get_existing_skills(
-                            cur, vacancy_fact_id, existing_pk
-                        )
-                        skills_changed = existing_skills != new_skills
+                        existing_skills = get_existing_m2m(cur, "vacancy_to_skills", vacancy_fact_id, existing_pk,
+                                                           "skill_id")
+                        # For skills we compare tuples, so we need a slight adjustment or just rebuild existing as tuples
+                        # Let's fetch tuples for skills specifically
+                        cur.execute("""
+                                    SELECT skill_level_id, skill_id
+                                    FROM fact.vacancy_to_skills
+                                    WHERE vacancy_fact_id = %s
+                                      AND partition_key = %s
+                                    """, (vacancy_fact_id, existing_pk))
+                        existing_skills_tuples = set(tuple(r) for r in cur.fetchall())
 
-                        if not (version_changed or timestamp_changed
-                                or fields_changed or skills_changed):
+                        skills_changed = existing_skills_tuples != new_skills
+
+                        existing_countries = get_existing_m2m(cur, "vacancy_to_employer_countries", vacancy_fact_id,
+                                                              existing_pk, "country_id")
+                        countries_changed = existing_countries != new_countries
+
+                        existing_languages = get_existing_m2m(cur, "vacancy_to_required_languages", vacancy_fact_id,
+                                                              existing_pk, "language_id")
+                        languages_changed = existing_languages != new_languages
+
+                        existing_certifications = get_existing_m2m(cur, "vacancy_to_certifications", vacancy_fact_id,
+                                                                   existing_pk, "certification_id")
+                        certifications_changed = existing_certifications != new_certifications
+
+                        if not (version_changed or timestamp_changed or fields_changed or
+                                skills_changed or countries_changed or languages_changed or certifications_changed):
                             unchanged += 1
                             continue
 
@@ -593,23 +605,58 @@ def main():
                                         WHERE vacancy_fact_id = %s
                                           AND partition_key = %s
                                         """, (
-                                            batch_ts, load_id, source_id,
-                                            model_id_dim, title_id, level_id,
-                                            employment_type_id, contract_type_id,
-                                            company_id, company_industry_id,
-                                            vacancy_site_id, vacancy_id_dim,
-                                            score, score_percentile,
-                                            saved_date_id, parsed_date_id,
-                                            file_created_date_id, file_updated_date_id,
-                                            partition_key,
-                                            VACANCY_VERSION, file_updated_dttm,
-                                            vacancy_fact_id, existing_pk
+                                            batch_ts, load_id, source_id, model_id_dim, title_id, level_id,
+                                            employment_type_id, contract_type_id, company_id, company_industry_id,
+                                            vacancy_site_id, vacancy_id_dim, score, score_percentile,
+                                            saved_date_id, parsed_date_id, file_created_date_id, file_updated_date_id,
+                                            partition_key, VACANCY_VERSION, file_updated_dttm, vacancy_fact_id,
+                                            existing_pk
                                         ))
 
-                            apply_skill_changes(
-                                cur, vacancy_fact_id, existing_pk,
-                                new_skills, batch_ts, load_id, source_id
-                            )
+                            # Apply M2M changes
+                            apply_m2m_changes(cur, "vacancy_to_skills", vacancy_fact_id, existing_pk, new_skills,
+                                              batch_ts, load_id, source_id,
+                                              "skill_id")  # Note: generic helper expects single ID, let's fix skills separately or adapt.
+                            # Actually, let's keep the specific skill apply logic to avoid breaking the tuple logic
+                            existing_skills_set = get_existing_m2m(cur, "vacancy_to_skills", vacancy_fact_id,
+                                                                   existing_pk, "skill_id")  # This is wrong for tuples.
+                            # Let's just reuse the old apply_skill_changes logic
+
+                            # Re-fetch existing skills as tuples for the specific apply function
+                            cur.execute("""
+                                        SELECT skill_level_id, skill_id
+                                        FROM fact.vacancy_to_skills
+                                        WHERE vacancy_fact_id = %s
+                                          AND partition_key = %s
+                                        """, (vacancy_fact_id, existing_pk))
+                            existing_skills_tuples = set(tuple(r) for r in cur.fetchall())
+
+                            to_insert_skills = new_skills - existing_skills_tuples
+                            to_delete_skills = existing_skills_tuples - new_skills
+                            for sl_id, s_id in to_delete_skills:
+                                cur.execute("""
+                                            DELETE
+                                            FROM fact.vacancy_to_skills
+                                            WHERE vacancy_fact_id = %s
+                                              AND skill_level_id = %s
+                                              AND skill_id = %s
+                                              AND partition_key = %s
+                                            """, (vacancy_fact_id, sl_id, s_id, existing_pk))
+                            for sl_id, s_id in to_insert_skills:
+                                cur.execute("""
+                                            INSERT INTO fact.vacancy_to_skills
+                                            (vacancy_fact_id, skill_level_id, skill_id, load_dttm, load_id, source_id,
+                                             partition_key)
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                            """,
+                                            (vacancy_fact_id, sl_id, s_id, batch_ts, load_id, source_id, existing_pk))
+
+                            apply_m2m_changes(cur, "vacancy_to_employer_countries", vacancy_fact_id, existing_pk,
+                                              new_countries, batch_ts, load_id, source_id, "country_id")
+                            apply_m2m_changes(cur, "vacancy_to_required_languages", vacancy_fact_id, existing_pk,
+                                              new_languages, batch_ts, load_id, source_id, "language_id")
+                            apply_m2m_changes(cur, "vacancy_to_certifications", vacancy_fact_id, existing_pk,
+                                              new_certifications, batch_ts, load_id, source_id, "certification_id")
 
                             conn.commit()
                             updated += 1
@@ -619,35 +666,58 @@ def main():
                     else:
                         try:
                             cur.execute("""
-                                        INSERT INTO fact.vacancy (vacancy_json_id, saved_date_id,
-                                                                  parsed_date_id, file_created_date_id,
-                                                                  file_updated_date_id, model_id, title_id,
-                                                                  level_id, employment_type_id,
-                                                                  contract_type_id, company_id,
-                                                                  company_industry_id, vacancy_site_id,
-                                                                  vacancy_id, score, score_percentile,
-                                                                  load_dttm, load_id, source_id,
-                                                                  partition_key, modified_timestamp, version)
-                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                                %s, %s) RETURNING vacancy_fact_id, partition_key
+                                        INSERT INTO fact.vacancy (vacancy_json_id, saved_date_id, parsed_date_id,
+                                                                  file_created_date_id, file_updated_date_id, model_id,
+                                                                  title_id, level_id,
+                                                                  employment_type_id, contract_type_id, company_id,
+                                                                  company_industry_id,
+                                                                  vacancy_site_id, vacancy_id, score, score_percentile,
+                                                                  load_dttm, load_id,
+                                                                  source_id, partition_key, modified_timestamp, version)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                                %s, %s, %s, %s) RETURNING vacancy_fact_id, partition_key
                                         """, (
-                                            vacancy_json_id, saved_date_id, parsed_date_id,
-                                            file_created_date_id, file_updated_date_id,
-                                            model_id_dim, title_id, level_id,
-                                            employment_type_id, contract_type_id,
-                                            company_id, company_industry_id,
-                                            vacancy_site_id, vacancy_id_dim,
-                                            score, score_percentile, batch_ts, load_id,
-                                            source_id, partition_key,
+                                            vacancy_json_id, saved_date_id, parsed_date_id, file_created_date_id,
+                                            file_updated_date_id,
+                                            model_id_dim, title_id, level_id, employment_type_id, contract_type_id,
+                                            company_id,
+                                            company_industry_id, vacancy_site_id, vacancy_id_dim, score,
+                                            score_percentile,
+                                            batch_ts, load_id, source_id, partition_key,
                                             datetime(1900, 1, 1, tzinfo=timezone.utc), 0
                                         ))
                             new_vacancy_fact_id, new_pk = cur.fetchone()
 
-                            insert_new_skills(
-                                cur, new_vacancy_fact_id, new_pk,
-                                new_skills, batch_ts, load_id, source_id
-                            )
+                            for sl_id, s_id in new_skills:
+                                cur.execute("""
+                                            INSERT INTO fact.vacancy_to_skills
+                                            (vacancy_fact_id, skill_level_id, skill_id, load_dttm, load_id, source_id,
+                                             partition_key)
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                            """,
+                                            (new_vacancy_fact_id, sl_id, s_id, batch_ts, load_id, source_id, new_pk))
+
+                            for c_id in new_countries:
+                                cur.execute("""
+                                            INSERT INTO fact.vacancy_to_employer_countries
+                                            (vacancy_fact_id, country_id, load_dttm, load_id, source_id, partition_key)
+                                            VALUES (%s, %s, %s, %s, %s, %s)
+                                            """, (new_vacancy_fact_id, c_id, batch_ts, load_id, source_id, new_pk))
+
+                            for l_id in new_languages:
+                                cur.execute("""
+                                            INSERT INTO fact.vacancy_to_required_languages
+                                            (vacancy_fact_id, language_id, load_dttm, load_id, source_id, partition_key)
+                                            VALUES (%s, %s, %s, %s, %s, %s)
+                                            """, (new_vacancy_fact_id, l_id, batch_ts, load_id, source_id, new_pk))
+
+                            for cert_id in new_certifications:
+                                cur.execute("""
+                                            INSERT INTO fact.vacancy_to_certifications
+                                            (vacancy_fact_id, certification_id, load_dttm, load_id, source_id,
+                                             partition_key)
+                                            VALUES (%s, %s, %s, %s, %s, %s)
+                                            """, (new_vacancy_fact_id, cert_id, batch_ts, load_id, source_id, new_pk))
 
                             conn.commit()
                             inserted += 1
@@ -659,17 +729,9 @@ def main():
             total_updated += updated
             total_unchanged += unchanged
 
-            print(
-                f"Processed batch with load_id={load_id} "
-                f"inserted={inserted} updated={updated} "
-                f"unchanged={unchanged}"
-            )
+            print(f"Processed batch with load_id={load_id} inserted={inserted} updated={updated} unchanged={unchanged}")
 
-        print(
-            f"Total inserted={total_inserted} "
-            f"updated={total_updated} "
-            f"unchanged={total_unchanged}"
-        )
+        print(f"Total inserted={total_inserted} updated={total_updated} unchanged={total_unchanged}")
 
     finally:
         conn.close()

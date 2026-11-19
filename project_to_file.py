@@ -77,7 +77,9 @@ YAML (.yml, .yaml):
 
 
 def concatenate_project_files(project_path, output_filename='combined_output.txt'):
-    root = Path(project_path)
+    paths = project_path if isinstance(project_path, list) else [project_path]
+
+    root = Path(project_path[0])
     output_path = root / output_filename
 
     # Supported file extensions
@@ -96,44 +98,45 @@ def concatenate_project_files(project_path, output_filename='combined_output.txt
 
     exclude_dirs = {'weights', '.idea', '__pycache__', '.venv',
                     '.git', 'premsql', "TestCases", "out", "omniparser",
-                    "parsed screens", "screens", 'target'}
+                    "parsed screens", "screens", 'run', 'target'}
     exclude_extensions = {'.pyc', '.pyo', '.pyd', '.mhtml',
                           '.cmd', '.ipynb', '.ipynb_checkpoints',
                           '.ipynb_media', '.sh', '.log', '.gpickle',
                           ".safetensors"} | set(IMAGE_EXTENSIONS) | set(DOCUMENT_EXTENSIONS)
     exclude_filenames = {'.env', '.DS_Store', output_filename,
                          ".gitignore", 'run_results.json', "password.txt", ".gitkeep" }
-    exclude_specific_paths = {'download/my_token.py', 'README.md', 'combined_output.txt'}
+    exclude_specific_paths = {'download/my_token.py', 'README.md', 'combined_output.txt', "project_to_file.py" }
 
     # Write with newline='' to prevent double-conversion of \n on Windows
     with open(output_path, 'w', encoding='utf-8', newline='') as outfile:
         outfile.write(PROMPT)
-        for path in sorted(root.rglob('*')):
-            if not path.is_file():
-                continue
+        for root in paths:
+            for path in sorted(Path(root).rglob('*')):
+                if not path.is_file():
+                    continue
 
-            if any(part in exclude_dirs for part in path.parts):
-                continue
-            if path.suffix in exclude_extensions:
-                continue
-            if path.name in exclude_filenames:
-                continue
+                if any(part in exclude_dirs for part in path.parts):
+                    continue
+                if path.suffix in exclude_extensions:
+                    continue
+                if path.name in exclude_filenames:
+                    continue
 
-            relative_path = path.relative_to(root)
-            if relative_path.as_posix() in exclude_specific_paths:
-                continue
+                relative_path = path.relative_to(root)
+                if relative_path.as_posix() in exclude_specific_paths:
+                    continue
 
-            outfile.write(f"=====START {relative_path} =====\n")
-            try:
-                content = detect_and_read_file(path)
-                outfile.write(content)
-            except Exception as e:
-                outfile.write(f"\n[Error reading file: {e}]\n")
-            outfile.write(f"\n=====END {relative_path} =====\n")
-            print(relative_path)
+                outfile.write(f"=====START {relative_path} =====\n")
+                try:
+                    content = detect_and_read_file(path)
+                    outfile.write(content)
+                except Exception as e:
+                    outfile.write(f"\n[Error reading file: {e}]\n")
+                outfile.write(f"\n=====END {relative_path} =====\n")
+                print(relative_path)
 
 
 def project_to_file_main():
     PROJECT_PATH = r"C:\Py\dbt_vacancies"
-    concatenate_project_files(PROJECT_PATH)
+    concatenate_project_files([PROJECT_PATH, PROJECT_PATH + r'\target\compiled'])
     print(f"Done: {PROJECT_PATH}\\combined_output.txt")
