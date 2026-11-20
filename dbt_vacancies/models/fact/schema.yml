@@ -51,6 +51,26 @@ models:
       - name: version
         description: "ETL processing version for the record."
 
+  - name: vacancy2
+    description: "1-to-1 extension fact table for vacancy URLs and file paths."
+    columns:
+      - name: vacancy_fact_id
+        description: "FK to fact.vacancy (includes partition_key in FK)."
+      - name: partition_key
+        description: "Partition key in YYYYMM format (matches fact.vacancy)."
+      - name: vacancy_url
+        description: "Direct URL to the vacancy posting."
+      - name: apply_url
+        description: "Direct URL to apply for the vacancy."
+      - name: json_path
+        description: "Local file path to the parsed JSON file."
+      - name: txt_path
+        description: "Local file path to the parsed TXT file."
+      - name: html_path
+        description: "Local file path to the parsed HTML file."
+      - name: search_url
+        description: "Original search URL that led to this vacancy."
+
   - name: vacancy_to_skills
     description: "Many-to-many fact linking vacancies to skills with proficiency levels."
     columns:
