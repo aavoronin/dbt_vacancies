@@ -20,6 +20,16 @@ DIM_CONFIG = {
     "company_industries": ("company_industry_id", "company_industry_name"),
     "vacancy_sites": ("vacancy_site_id", "vacancy_site_name"),
     "vacancy_ids": ("vacancy_id", "vacancy_id_name"),
+    "education_levels": ("education_level_id", "education_level_name"),
+    "company_sizes": ("company_size_id", "company_size_name"),
+    "currencies": ("currency_id", "currency_code"),
+    "salary_periods": ("period_id", "period_name"),
+    "security_clearances": ("security_clearance_id", "security_clearance_name"),
+    "urgencies": ("urgency_id", "urgency_name"),
+    "hiring_managers": ("hiring_manager_id", "hiring_manager_name"),
+    "employer_cities": ("employer_city_id", "employer_city_name"),
+    "employer_states": ("employer_state_id", "employer_state_name"),
+    "employer_timezones": ("employer_timezone_id", "employer_timezone_name"),
 }
 
 
@@ -44,8 +54,6 @@ def connect():
 
 
 def ensure_default_dims(conn):
-    # DML only: ensure default unknown records exist in dimension tables.
-    # Table structures are managed by dbt.
     with conn, conn.cursor() as cur:
         for table, (id_col, name_col) in DIM_CONFIG.items():
             cur.execute(f"""
@@ -56,7 +64,6 @@ def ensure_default_dims(conn):
 
 
 def ensure_skill_levels(conn):
-    """Seed the fixed skill_level dimension with the 3 expected levels."""
     with conn, conn.cursor() as cur:
         for idx, name in enumerate(SKILL_LEVELS, start=1):
             cur.execute("""
@@ -67,7 +74,6 @@ def ensure_skill_levels(conn):
 
 
 def ensure_partition(cur, table_name, partition_key):
-    """Create partition for the given partition_key if it doesn't exist."""
     partition_name = f"{table_name}_p{partition_key}"
     cur.execute("""
         SELECT 1
@@ -134,7 +140,6 @@ def get_dim_key(cur, table, id_col, name_col, val, load_dttm, load_id, source_id
 
 
 def get_vacancy_id_dim(cur, vacancy_id_name, load_dttm, load_id, source_id):
-    """Get or create a vacancy ID dimension record using the string identifier."""
     if vacancy_id_name is None or str(vacancy_id_name).strip() == "":
         vacancy_id_name = "UNKNOWN_UNKNOWN"
 
@@ -174,7 +179,6 @@ def get_skill_level_id(cur, level_name):
 
 
 def get_skill_id(cur, skill_name, load_dttm, load_id, source_id):
-    """Get or create a skill. Names are stored lowercase for case-insensitive match."""
     if skill_name is None or str(skill_name).strip() == "":
         return None
 
@@ -201,7 +205,6 @@ def get_skill_id(cur, skill_name, load_dttm, load_id, source_id):
 
 
 def get_m2m_dim_id(cur, table, id_col, name_col, val, load_dttm, load_id, source_id):
-    """Generic helper for many-to-many dimensions (countries, languages, certs)."""
     if val is None or str(val).strip() == "":
         return None
 
@@ -247,13 +250,22 @@ def get_partition_key(dt_str):
         return -1
 
 
+def parse_numeric(val):
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return None
+
+
+def parse_boolean(val):
+    if val is None:
+        return None
+    return str(val).strip().lower() in ("yes", "true", "1", "y")
+
+
 def get_estimation_field(est1, est2, field_name):
-    """
-    Extract a field from the preferred estimation (estimation2 if valid, else estimation1).
-    For model_id, score, score_percentile: look at top level of estimation object.
-    For all other fields: look inside the nested "json" object.
-    Returns the field value as a string, or None if missing/invalid.
-    """
     model_id_2 = est2.get("model_id") if est2 and isinstance(est2, dict) else None
     model_id_1 = est1.get("model_id") if est1 and isinstance(est1, dict) else None
 
@@ -296,10 +308,6 @@ def get_estimation_field(est1, est2, field_name):
 
 
 def get_preferred_nested_json(est1, est2, top_level_j):
-    """
-    Select the nested 'json' object from the preferred estimation based on
-    model_id validity, falling back to the top-level JSON if neither is valid.
-    """
     model_id_2 = est2.get("model_id") if isinstance(est2, dict) else None
     model_id_1 = est1.get("model_id") if isinstance(est1, dict) else None
 
@@ -319,7 +327,6 @@ def get_preferred_nested_json(est1, est2, top_level_j):
 
 
 def extract_skills(j, est1, est2):
-    """Extract skills from the preferred estimation's nested json."""
     preferred_json = get_preferred_nested_json(est1, est2, j)
     result = {}
     for level in SKILL_LEVELS:
@@ -335,7 +342,6 @@ def extract_skills(j, est1, est2):
 
 
 def extract_m2m_lists(j, est1, est2):
-    """Extract EmployerCountry, RequiredLanguages, CertificationsRequired."""
     preferred_json = get_preferred_nested_json(est1, est2, j)
 
     countries_raw = preferred_json.get("EmployerCountry") or []
@@ -361,13 +367,17 @@ def extract_m2m_lists(j, est1, est2):
 
 
 def get_existing_vacancy(cur, vacancy_json_id):
-    """Fetch the existing fact.vacancy row or None."""
     cur.execute("""
         SELECT vacancy_fact_id, partition_key, model_id, title_id, level_id,
                employment_type_id, contract_type_id, company_id, company_industry_id,
                vacancy_site_id, vacancy_id, score, score_percentile, saved_date_id,
                parsed_date_id, file_created_date_id, file_updated_date_id,
-               version, modified_timestamp
+               version, modified_timestamp, salary_min, salary_max, relocation_budget,
+               working_hours_per_week, min_years_experience, max_years_experience,
+               is_full_time, is_relocation_offered, is_visa_sponsorship, is_health_insurance,
+               education_level_id, company_size_id, salary_currency_id, salary_period_id,
+               relocation_budget_currency_id, security_clearance_id, urgency_id,
+               hiring_manager_id, employer_city_id, employer_state_id, employer_timezone_id
         FROM fact.vacancy
         WHERE vacancy_json_id = %s
     """, (vacancy_json_id,))
@@ -460,16 +470,15 @@ def main():
                 est1 = j.get("estimation1") or {}
                 est2 = j.get("estimation2") or {}
 
-                # Extract site and job_id from file_path
                 match = re.search(r"[/\\]([^/\\]+)_Vacancy_(.+)\.json$", file_path)
                 if match:
                     vacancy_site = match.group(1)
-                    job_id = match.group(2)
+                    job_id_raw = match.group(2)
                 else:
                     vacancy_site = "UNKNOWN"
-                    job_id = "UNKNOWN"
+                    job_id_raw = "UNKNOWN"
 
-                vacancy_id_name = f"{vacancy_site}_{job_id}"
+                vacancy_id_name = f"{vacancy_site}_{job_id_raw}"
 
                 model_id = get_estimation_field(est1, est2, "model_id")
                 title = get_estimation_field(est1, est2, "Title")
@@ -481,6 +490,39 @@ def main():
                 score = get_estimation_field(est1, est2, "score")
                 score_percentile = get_estimation_field(est1, est2, "score_percentile")
 
+                salary_min = parse_numeric(get_estimation_field(est1, est2, "SalaryMin"))
+                salary_max = parse_numeric(get_estimation_field(est1, est2, "SalaryMax"))
+                relocation_budget = parse_numeric(get_estimation_field(est1, est2, "RelocationBudget"))
+                working_hours_per_week = parse_numeric(get_estimation_field(est1, est2, "WorkingHoursPerWeek"))
+                min_years_experience = parse_numeric(get_estimation_field(est1, est2, "MinYearsExperience"))
+                max_years_experience = parse_numeric(get_estimation_field(est1, est2, "MaxYearsExperience"))
+
+                is_full_time = parse_boolean(get_estimation_field(est1, est2, "FullTime"))
+                is_relocation_offered = parse_boolean(get_estimation_field(est1, est2, "RelocationOffered"))
+                is_visa_sponsorship = parse_boolean(get_estimation_field(est1, est2, "VisaSponsorship"))
+                is_health_insurance = parse_boolean(get_estimation_field(est1, est2, "HealthInsurance"))
+
+                education_level = get_estimation_field(est1, est2, "EducationLevel")
+                company_size = get_estimation_field(est1, est2, "CompanySize")
+                salary_currency = get_estimation_field(est1, est2, "SalaryCurrency")
+                salary_period = get_estimation_field(est1, est2, "SalaryPeriod")
+                relocation_budget_currency = get_estimation_field(est1, est2, "RelocationBudgetCurrency")
+                security_clearance = get_estimation_field(est1, est2, "SecurityClearance")
+                urgency = get_estimation_field(est1, est2, "Urgency")
+                hiring_manager_name = get_estimation_field(est1, est2, "HiringManagerName")
+                employer_city = get_estimation_field(est1, est2, "EmployerCity")
+                employer_state = get_estimation_field(est1, est2, "EmployerState")
+                employer_timezone = get_estimation_field(est1, est2, "EmployerTimezone")
+
+                json_path = j.get("json_path") or file_path
+                txt_path = j.get("txt_path")
+                html_path = j.get("html_path")
+                search_url = j.get("url")
+                vacancy_url = get_estimation_field(est1, est2, "VacancyURL")
+                apply_url = get_estimation_field(est1, est2, "ApplyURL")
+                job_id = get_estimation_field(est1, est2, "JobId")
+                applicants_count_raw = get_estimation_field(est1, est2, "ApplicantsCount")
+
                 with conn, conn.cursor() as cur:
                     model_id_dim = get_dim_key(cur, "models", "model_id", "model_name", model_id, batch_ts, load_id, source_id)
                     title_id = get_dim_key(cur, "titles", "title_id", "title_name", title, batch_ts, load_id, source_id)
@@ -491,6 +533,18 @@ def main():
                     company_industry_id = get_dim_key(cur, "company_industries", "company_industry_id", "company_industry_name", company_industry, batch_ts, load_id, source_id)
                     vacancy_site_id = get_dim_key(cur, "vacancy_sites", "vacancy_site_id", "vacancy_site_name", vacancy_site, batch_ts, load_id, source_id)
                     vacancy_id_dim = get_vacancy_id_dim(cur, vacancy_id_name, batch_ts, load_id, source_id)
+
+                    education_level_id = get_dim_key(cur, "education_levels", "education_level_id", "education_level_name", education_level, batch_ts, load_id, source_id)
+                    company_size_id = get_dim_key(cur, "company_sizes", "company_size_id", "company_size_name", company_size, batch_ts, load_id, source_id)
+                    salary_currency_id = get_dim_key(cur, "currencies", "currency_id", "currency_code", salary_currency, batch_ts, load_id, source_id)
+                    salary_period_id = get_dim_key(cur, "salary_periods", "period_id", "period_name", salary_period, batch_ts, load_id, source_id)
+                    relocation_budget_currency_id = get_dim_key(cur, "currencies", "currency_id", "currency_code", relocation_budget_currency, batch_ts, load_id, source_id)
+                    security_clearance_id = get_dim_key(cur, "security_clearances", "security_clearance_id", "security_clearance_name", security_clearance, batch_ts, load_id, source_id)
+                    urgency_id = get_dim_key(cur, "urgencies", "urgency_id", "urgency_name", urgency, batch_ts, load_id, source_id)
+                    hiring_manager_id = get_dim_key(cur, "hiring_managers", "hiring_manager_id", "hiring_manager_name", hiring_manager_name, batch_ts, load_id, source_id)
+                    employer_city_id = get_dim_key(cur, "employer_cities", "employer_city_id", "employer_city_name", employer_city, batch_ts, load_id, source_id)
+                    employer_state_id = get_dim_key(cur, "employer_states", "employer_state_id", "employer_state_name", employer_state, batch_ts, load_id, source_id)
+                    employer_timezone_id = get_dim_key(cur, "employer_timezones", "employer_timezone_id", "employer_timezone_name", employer_timezone, batch_ts, load_id, source_id)
 
                     saved_date_str = j.get("saved_date")
                     parsed_date_str = j.get("parsed_date")
@@ -505,12 +559,12 @@ def main():
                         continue
 
                     ensure_partition(cur, "vacancy", partition_key)
+                    ensure_partition(cur, "vacancy2", partition_key)
                     ensure_partition(cur, "vacancy_to_skills", partition_key)
                     ensure_partition(cur, "vacancy_to_employer_countries", partition_key)
                     ensure_partition(cur, "vacancy_to_required_languages", partition_key)
                     ensure_partition(cur, "vacancy_to_certifications", partition_key)
 
-                    # Skills
                     new_skills = set()
                     skills_data = extract_skills(j, est1, est2)
                     for level_name, skill_names in skills_data.items():
@@ -522,7 +576,6 @@ def main():
                             if s_id is not None:
                                 new_skills.add((sl_id, s_id))
 
-                    # M2M Dimensions
                     countries, languages, certifications = extract_m2m_lists(j, est1, est2)
 
                     new_countries = set()
@@ -549,7 +602,12 @@ def main():
                         (vacancy_fact_id, existing_pk, ex_model, ex_title, ex_level,
                          ex_employment, ex_contract, ex_company, ex_industry, ex_site,
                          ex_vacancy_id, ex_score, ex_percentile, ex_saved, ex_parsed,
-                         ex_fcreated, ex_fupdated, ex_version, ex_modified) = existing
+                         ex_fcreated, ex_fupdated, ex_version, ex_modified, ex_salary_min,
+                         ex_salary_max, ex_reloc_budget, ex_working_hours, ex_min_exp,
+                         ex_max_exp, ex_is_ft, ex_is_reloc, ex_is_visa, ex_is_health,
+                         ex_edu_lvl, ex_comp_size, ex_salary_curr, ex_salary_period,
+                         ex_reloc_curr, ex_sec_clear, ex_urgency, ex_hiring_mgr,
+                         ex_emp_city, ex_emp_state, ex_emp_tz) = existing
 
                         version_changed = ex_version is None or ex_version != VACANCY_VERSION
                         timestamp_changed = ex_modified != file_updated_dttm
@@ -565,10 +623,20 @@ def main():
                             (ex_percentile is None) != (score_percentile is None) or
                             (ex_percentile is not None and float(ex_percentile) != float(score_percentile)) or
                             ex_saved != saved_date_id or ex_parsed != parsed_date_id or
-                            ex_fcreated != file_created_date_id or ex_fupdated != file_updated_date_id
+                            ex_fcreated != file_created_date_id or ex_fupdated != file_updated_date_id or
+                            ex_salary_min != salary_min or ex_salary_max != salary_max or
+                            ex_reloc_budget != relocation_budget or ex_working_hours != working_hours_per_week or
+                            ex_min_exp != min_years_experience or ex_max_exp != max_years_experience or
+                            ex_is_ft != is_full_time or ex_is_reloc != is_relocation_offered or
+                            ex_is_visa != is_visa_sponsorship or ex_is_health != is_health_insurance or
+                            ex_edu_lvl != education_level_id or ex_comp_size != company_size_id or
+                            ex_salary_curr != salary_currency_id or ex_salary_period != salary_period_id or
+                            ex_reloc_curr != relocation_budget_currency_id or ex_sec_clear != security_clearance_id or
+                            ex_urgency != urgency_id or ex_hiring_mgr != hiring_manager_id or
+                            ex_emp_city != employer_city_id or ex_emp_state != employer_state_id or
+                            ex_emp_tz != employer_timezone_id
                         )
 
-                        # Check skills (tuple comparison)
                         cur.execute("""
                             SELECT skill_level_id, skill_id FROM fact.vacancy_to_skills
                             WHERE vacancy_fact_id = %s AND partition_key = %s
@@ -601,17 +669,54 @@ def main():
                                     score = %s, score_percentile = %s,
                                     saved_date_id = %s, parsed_date_id = %s,
                                     file_created_date_id = %s, file_updated_date_id = %s,
-                                    partition_key = %s, version = %s, modified_timestamp = %s
+                                    partition_key = %s, version = %s, modified_timestamp = %s,
+                                    salary_min = %s, salary_max = %s, relocation_budget = %s,
+                                    working_hours_per_week = %s, min_years_experience = %s,
+                                    max_years_experience = %s, is_full_time = %s,
+                                    is_relocation_offered = %s, is_visa_sponsorship = %s,
+                                    is_health_insurance = %s, education_level_id = %s,
+                                    company_size_id = %s, salary_currency_id = %s,
+                                    salary_period_id = %s, relocation_budget_currency_id = %s,
+                                    security_clearance_id = %s, urgency_id = %s,
+                                    hiring_manager_id = %s, employer_city_id = %s,
+                                    employer_state_id = %s, employer_timezone_id = %s
                                 WHERE vacancy_fact_id = %s AND partition_key = %s
                             """, (
                                 batch_ts, load_id, source_id, model_id_dim, title_id, level_id,
                                 employment_type_id, contract_type_id, company_id, company_industry_id,
                                 vacancy_site_id, vacancy_id_dim, score, score_percentile,
                                 saved_date_id, parsed_date_id, file_created_date_id, file_updated_date_id,
-                                partition_key, VACANCY_VERSION, file_updated_dttm, vacancy_fact_id, existing_pk
+                                partition_key, VACANCY_VERSION, file_updated_dttm,
+                                salary_min, salary_max, relocation_budget, working_hours_per_week,
+                                min_years_experience, max_years_experience, is_full_time,
+                                is_relocation_offered, is_visa_sponsorship, is_health_insurance,
+                                education_level_id, company_size_id, salary_currency_id,
+                                salary_period_id, relocation_budget_currency_id, security_clearance_id,
+                                urgency_id, hiring_manager_id, employer_city_id, employer_state_id,
+                                employer_timezone_id, vacancy_fact_id, existing_pk
                             ))
 
-                            # Apply skill changes (tuple-based)
+                            cur.execute("""
+                                INSERT INTO fact.vacancy2 (
+                                    vacancy_fact_id, partition_key, vacancy_url, apply_url,
+                                    json_path, txt_path, html_path, search_url, job_id,
+                                    applicants_count_raw
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                ON CONFLICT (partition_key, vacancy_fact_id) DO UPDATE SET
+                                    vacancy_url = EXCLUDED.vacancy_url,
+                                    apply_url = EXCLUDED.apply_url,
+                                    json_path = EXCLUDED.json_path,
+                                    txt_path = EXCLUDED.txt_path,
+                                    html_path = EXCLUDED.html_path,
+                                    search_url = EXCLUDED.search_url,
+                                    job_id = EXCLUDED.job_id,
+                                    applicants_count_raw = EXCLUDED.applicants_count_raw
+                            """, (
+                                vacancy_fact_id, existing_pk, vacancy_url, apply_url,
+                                json_path, txt_path, html_path, search_url, job_id,
+                                applicants_count_raw
+                            ))
+
                             to_insert_skills = new_skills - existing_skills_tuples
                             to_delete_skills = existing_skills_tuples - new_skills
                             for sl_id, s_id in to_delete_skills:
@@ -626,7 +731,6 @@ def main():
                                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                                 """, (vacancy_fact_id, sl_id, s_id, batch_ts, load_id, source_id, existing_pk))
 
-                            # Apply M2M changes for other tables
                             apply_m2m_changes(cur, "vacancy_to_employer_countries", vacancy_fact_id, existing_pk, new_countries, batch_ts, load_id, source_id, "country_id")
                             apply_m2m_changes(cur, "vacancy_to_required_languages", vacancy_fact_id, existing_pk, new_languages, batch_ts, load_id, source_id, "language_id")
                             apply_m2m_changes(cur, "vacancy_to_certifications", vacancy_fact_id, existing_pk, new_certifications, batch_ts, load_id, source_id, "certification_id")
@@ -643,16 +747,43 @@ def main():
                                     file_created_date_id, file_updated_date_id, model_id, title_id, level_id,
                                     employment_type_id, contract_type_id, company_id, company_industry_id,
                                     vacancy_site_id, vacancy_id, score, score_percentile, load_dttm, load_id,
-                                    source_id, partition_key, modified_timestamp, version)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                    source_id, partition_key, modified_timestamp, version,
+                                    salary_min, salary_max, relocation_budget, working_hours_per_week,
+                                    min_years_experience, max_years_experience, is_full_time,
+                                    is_relocation_offered, is_visa_sponsorship, is_health_insurance,
+                                    education_level_id, company_size_id, salary_currency_id,
+                                    salary_period_id, relocation_budget_currency_id, security_clearance_id,
+                                    urgency_id, hiring_manager_id, employer_city_id, employer_state_id,
+                                    employer_timezone_id)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 RETURNING vacancy_fact_id, partition_key
                             """, (
                                 vacancy_json_id, saved_date_id, parsed_date_id, file_created_date_id, file_updated_date_id,
                                 model_id_dim, title_id, level_id, employment_type_id, contract_type_id, company_id,
                                 company_industry_id, vacancy_site_id, vacancy_id_dim, score, score_percentile,
-                                batch_ts, load_id, source_id, partition_key, datetime(1900, 1, 1, tzinfo=timezone.utc), 0
+                                batch_ts, load_id, source_id, partition_key, datetime(1900, 1, 1, tzinfo=timezone.utc), 0,
+                                salary_min, salary_max, relocation_budget, working_hours_per_week,
+                                min_years_experience, max_years_experience, is_full_time,
+                                is_relocation_offered, is_visa_sponsorship, is_health_insurance,
+                                education_level_id, company_size_id, salary_currency_id,
+                                salary_period_id, relocation_budget_currency_id, security_clearance_id,
+                                urgency_id, hiring_manager_id, employer_city_id, employer_state_id,
+                                employer_timezone_id
                             ))
                             new_vacancy_fact_id, new_pk = cur.fetchone()
+
+                            cur.execute("""
+                                INSERT INTO fact.vacancy2 (
+                                    vacancy_fact_id, partition_key, vacancy_url, apply_url,
+                                    json_path, txt_path, html_path, search_url, job_id,
+                                    applicants_count_raw
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            """, (
+                                new_vacancy_fact_id, new_pk, vacancy_url, apply_url,
+                                json_path, txt_path, html_path, search_url, job_id,
+                                applicants_count_raw
+                            ))
 
                             for sl_id, s_id in new_skills:
                                 cur.execute("""

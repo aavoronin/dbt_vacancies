@@ -112,3 +112,83 @@ models:
         description: "Surrogate ID for the certification."
       - name: certification_name
         description: "The certification name (lowercase, unique)."
+
+  - name: education_levels
+    description: "Dimension table for required education levels."
+    columns:
+      - name: education_level_id
+        description: "Surrogate ID for the education level."
+      - name: education_level_name
+        description: "The education level string (e.g., 'bachelor', 'master')."
+
+  - name: company_sizes
+    description: "Dimension table for company employee count ranges."
+    columns:
+      - name: company_size_id
+        description: "Surrogate ID for the company size."
+      - name: company_size_name
+        description: "The company size string (e.g., '1000+', '10001+')."
+
+  - name: currencies
+    description: "Dimension table for salary and relocation currencies."
+    columns:
+      - name: currency_id
+        description: "Surrogate ID for the currency."
+      - name: currency_code
+        description: "The currency code (e.g., 'USD', 'EUR', 'GBP')."
+
+  - name: salary_periods
+    description: "Dimension table for salary payment periods."
+    columns:
+      - name: period_id
+        description: "Surrogate ID for the period."
+      - name: period_name
+        description: "The period name (e.g., 'year', 'month', 'hour')."
+
+  - name: security_clearances
+    description: "Dimension table for required security clearance levels."
+    columns:
+      - name: security_clearance_id
+        description: "Surrogate ID for the security clearance."
+      - name: security_clearance_name
+        description: "The security clearance level string."
+
+  - name: urgencies
+    description: "Dimension table for hiring urgency levels."
+    columns:
+      - name: urgency_id
+        description: "Surrogate ID for the urgency."
+      - name: urgency_name
+        description: "The urgency level string."
+
+  - name: hiring_managers
+    description: "Dimension table for hiring manager or recruiter names."
+    columns:
+      - name: hiring_manager_id
+        description: "Surrogate ID for the hiring manager."
+      - name: hiring_manager_name
+        description: "The hiring manager name string."
+
+  - name: employer_cities
+    description: "Dimension table for employer cities."
+    columns:
+      - name: employer_city_id
+        description: "Surrogate ID for the city."
+      - name: employer_city_name
+        description: "The city name string."
+
+  - name: employer_states
+    description: "Dimension table for employer states or regions."
+    columns:
+      - name: employer_state_id
+        description: "Surrogate ID for the state."
+      - name: employer_state_name
+        description: "The state or region name string."
+
+  - name: employer_timezones
+    description: "Dimension table for employer timezones."
+    columns:
+      - name: employer_timezone_id
+        description: "Surrogate ID for the timezone."
+      - name: employer_timezone_name
+        description: "The timezone string."

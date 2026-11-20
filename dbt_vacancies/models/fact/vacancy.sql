@@ -1,10 +1,4 @@
-{{ config(
-    materialized='external_table',
-    post_hook=[
-        "ALTER TABLE {{ this }} ADD COLUMN IF NOT EXISTS modified_timestamp TIMESTAMPTZ",
-        "ALTER TABLE {{ this }} ADD COLUMN IF NOT EXISTS version INT"
-    ]
-) }}
+{{ config(materialized='external_table') }}
 
 CREATE TABLE IF NOT EXISTS {{ this }} (
     vacancy_fact_id BIGINT GENERATED ALWAYS AS IDENTITY,
@@ -30,5 +24,26 @@ CREATE TABLE IF NOT EXISTS {{ this }} (
     partition_key INT,
     modified_timestamp TIMESTAMPTZ,
     version INT,
+    salary_min NUMERIC,
+    salary_max NUMERIC,
+    relocation_budget NUMERIC,
+    working_hours_per_week NUMERIC,
+    min_years_experience INT,
+    max_years_experience INT,
+    is_full_time BOOLEAN,
+    is_relocation_offered BOOLEAN,
+    is_visa_sponsorship BOOLEAN,
+    is_health_insurance BOOLEAN,
+    education_level_id INT,
+    company_size_id INT,
+    salary_currency_id INT,
+    salary_period_id INT,
+    relocation_budget_currency_id INT,
+    security_clearance_id INT,
+    urgency_id INT,
+    hiring_manager_id INT,
+    employer_city_id INT,
+    employer_state_id INT,
+    employer_timezone_id INT,
     PRIMARY KEY (partition_key, vacancy_fact_id)
 ) PARTITION BY RANGE (partition_key)

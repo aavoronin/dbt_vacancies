@@ -1,13 +1,3 @@
--- To apply this change without deleting existing dimension elements, run:
--- dbt run --select certifications
-
-{{ config(
-    materialized='external_table',
-    pre_hook=[
-        "ALTER TABLE IF EXISTS {{ this }} ADD COLUMN IF NOT EXISTS exam_code TEXT GENERATED ALWAYS AS (substring(certification_name from '([a-z]{2}-[0-9]{3})')) STORED"
-    ]
-) }}
-
 CREATE TABLE IF NOT EXISTS {{ this }} (
     certification_id INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     certification_name TEXT NOT NULL UNIQUE,

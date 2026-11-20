@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS {{ this }} (
     txt_path TEXT,
     html_path TEXT,
     search_url TEXT,
+    job_id TEXT,
+    applicants_count_raw TEXT,
     PRIMARY KEY (partition_key, vacancy_fact_id),
     FOREIGN KEY (partition_key, vacancy_fact_id)
         REFERENCES {{ ref('vacancy') }} (partition_key, vacancy_fact_id)
