@@ -41,7 +41,7 @@ def main():
 
     # 1) Run dbt
     # Default to 'run' if no arguments are passed
-    dbt_args = sys.argv[1:] if len(sys.argv) > 1 else ["run", "--full-refresh"]
+    dbt_args = sys.argv[1:] if len(sys.argv) > 1 else ["run"] #, "--full-refresh"]
     dbt_cmd = ["dbt"] + dbt_args
     run_step(dbt_cmd, cwd=dbt_project_root)
 
