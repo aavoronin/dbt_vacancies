@@ -1,11 +1,12 @@
 import os
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 import psycopg2
 
 BATCH_SIZE = 1024
-VACANCY_VERSION = 3
+VACANCY_VERSION = 4
 
 SKILL_LEVELS = ["expert", "required", "nice-to-have"]
 
@@ -48,10 +49,10 @@ def ensure_default_dims(conn):
     with conn, conn.cursor() as cur:
         for table, (id_col, name_col) in DIM_CONFIG.items():
             cur.execute(f"""
-                INSERT INTO dim.{table} ({id_col}, {name_col})
-                VALUES (-1, '-')
-                ON CONFLICT ({id_col}) DO NOTHING
-            """)
+                INSERT INTO dim.{table} ({name_col}, load_dttm, load_id, source_id)
+                VALUES ('-', %s, %s, %s)
+                ON CONFLICT ({name_col}) DO NOTHING
+            """, (datetime.now(timezone.utc), -1, -1))
 
 
 def ensure_skill_levels(conn):
@@ -60,6 +61,7 @@ def ensure_skill_levels(conn):
         for idx, name in enumerate(SKILL_LEVELS, start=1):
             cur.execute("""
                 INSERT INTO dim.skill_levels (skill_level_id, skill_level_name)
+                OVERRIDING SYSTEM VALUE
                 VALUES (%s, %s) ON CONFLICT (skill_level_id) DO NOTHING
             """, (idx, name))
 
@@ -117,8 +119,8 @@ def get_dim_key(cur, table, id_col, name_col, val, load_dttm, load_id, source_id
         return row[0]
 
     cur.execute(f"""
-        INSERT INTO dim.{table} ({id_col}, {name_col}, load_dttm, load_id, source_id)
-        VALUES ((SELECT COALESCE(MAX({id_col}), 0) + 1 FROM dim.{table}), %s, %s, %s, %s)
+        INSERT INTO dim.{table} ({name_col}, load_dttm, load_id, source_id)
+        VALUES (%s, %s, %s, %s)
         ON CONFLICT ({name_col}) DO NOTHING
         RETURNING {id_col}
     """, (val, load_dttm, load_id, source_id))
@@ -128,6 +130,37 @@ def get_dim_key(cur, table, id_col, name_col, val, load_dttm, load_id, source_id
         return row[0]
 
     cur.execute(f"SELECT {id_col} FROM dim.{table} WHERE {name_col} = %s", (val,))
+    return cur.fetchone()[0]
+
+
+def get_vacancy_id_dim(cur, vacancy_id_name, load_dttm, load_id, source_id):
+    """Get or create a vacancy ID dimension record using the string identifier."""
+    if vacancy_id_name is None or str(vacancy_id_name).strip() == "":
+        vacancy_id_name = "UNKNOWN_UNKNOWN"
+
+    cur.execute(
+        "SELECT vacancy_id FROM dim.vacancy_ids WHERE vacancy_id_name = %s",
+        (vacancy_id_name,)
+    )
+    row = cur.fetchone()
+    if row:
+        return row[0]
+
+    cur.execute("""
+        INSERT INTO dim.vacancy_ids (vacancy_id_name, load_dttm, load_id, source_id)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (vacancy_id_name) DO NOTHING
+        RETURNING vacancy_id
+    """, (vacancy_id_name, load_dttm, load_id, source_id))
+
+    row = cur.fetchone()
+    if row:
+        return row[0]
+
+    cur.execute(
+        "SELECT vacancy_id FROM dim.vacancy_ids WHERE vacancy_id_name = %s",
+        (vacancy_id_name,)
+    )
     return cur.fetchone()[0]
 
 
@@ -154,9 +187,8 @@ def get_skill_id(cur, skill_name, load_dttm, load_id, source_id):
 
     cur.execute("""
         INSERT INTO dim.skills
-            (skill_id, skill_name, load_dttm, load_id, source_id)
-        VALUES ((SELECT COALESCE(MAX(skill_id), 0) + 1 FROM dim.skills),
-                %s, %s, %s, %s) ON CONFLICT (skill_name) DO NOTHING
+            (skill_name, load_dttm, load_id, source_id)
+        VALUES (%s, %s, %s, %s) ON CONFLICT (skill_name) DO NOTHING
         RETURNING skill_id
     """, (name_lower, load_dttm, load_id, source_id))
 
@@ -181,8 +213,8 @@ def get_m2m_dim_id(cur, table, id_col, name_col, val, load_dttm, load_id, source
         return row[0]
 
     cur.execute(f"""
-        INSERT INTO dim.{table} ({id_col}, {name_col}, load_dttm, load_id, source_id)
-        VALUES ((SELECT COALESCE(MAX({id_col}), 0) + 1 FROM dim.{table}), %s, %s, %s, %s)
+        INSERT INTO dim.{table} ({name_col}, load_dttm, load_id, source_id)
+        VALUES (%s, %s, %s, %s)
         ON CONFLICT ({name_col}) DO NOTHING
         RETURNING {id_col}
     """, (name_lower, load_dttm, load_id, source_id))
@@ -387,7 +419,8 @@ def main():
 
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT vj.vacancy_json_id, vj."json", vj.file_created_dttm, vj.file_updated_dttm
+                SELECT vj.vacancy_json_id, vj."json", vj.file_path, 
+                       vj.file_created_dttm, vj.file_updated_dttm
                 FROM stage.vacancy_jsons vj
                 LEFT JOIN fact.vacancy fv ON vj.vacancy_json_id = fv.vacancy_json_id
                 WHERE fv.vacancy_json_id IS NULL
@@ -420,11 +453,23 @@ def main():
             for row in batch:
                 vacancy_json_id = row[0]
                 j = json.loads(row[1])
-                file_created_dttm = row[2]
-                file_updated_dttm = row[3]
+                file_path = row[2]
+                file_created_dttm = row[3]
+                file_updated_dttm = row[4]
 
                 est1 = j.get("estimation1") or {}
                 est2 = j.get("estimation2") or {}
+
+                # Extract site and job_id from file_path
+                match = re.search(r"[/\\]([^/\\]+)_Vacancy_(.+)\.json$", file_path)
+                if match:
+                    vacancy_site = match.group(1)
+                    job_id = match.group(2)
+                else:
+                    vacancy_site = "UNKNOWN"
+                    job_id = "UNKNOWN"
+
+                vacancy_id_name = f"{vacancy_site}_{job_id}"
 
                 model_id = get_estimation_field(est1, est2, "model_id")
                 title = get_estimation_field(est1, est2, "Title")
@@ -433,12 +478,8 @@ def main():
                 contract_type = get_estimation_field(est1, est2, "ContractType")
                 company_name = get_estimation_field(est1, est2, "CompanyName")
                 company_industry = get_estimation_field(est1, est2, "CompanyIndustry")
-                vacancy_site = get_estimation_field(est1, est2, "VacancySite")
-                job_id = get_estimation_field(est1, est2, "JobId")
                 score = get_estimation_field(est1, est2, "score")
                 score_percentile = get_estimation_field(est1, est2, "score_percentile")
-
-                vacancy_id_str = f"{vacancy_site or 'UNKNOWN'}_{job_id or 'UNKNOWN'}"
 
                 with conn, conn.cursor() as cur:
                     model_id_dim = get_dim_key(cur, "models", "model_id", "model_name", model_id, batch_ts, load_id, source_id)
@@ -449,7 +490,7 @@ def main():
                     company_id = get_dim_key(cur, "companies", "company_id", "company_name", company_name, batch_ts, load_id, source_id)
                     company_industry_id = get_dim_key(cur, "company_industries", "company_industry_id", "company_industry_name", company_industry, batch_ts, load_id, source_id)
                     vacancy_site_id = get_dim_key(cur, "vacancy_sites", "vacancy_site_id", "vacancy_site_name", vacancy_site, batch_ts, load_id, source_id)
-                    vacancy_id_dim = get_dim_key(cur, "vacancy_ids", "vacancy_id", "vacancy_id_name", vacancy_id_str, batch_ts, load_id, source_id)
+                    vacancy_id_dim = get_vacancy_id_dim(cur, vacancy_id_name, batch_ts, load_id, source_id)
 
                     saved_date_str = j.get("saved_date")
                     parsed_date_str = j.get("parsed_date")

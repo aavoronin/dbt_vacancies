@@ -66,12 +66,12 @@ models:
         description: "The job board site string."
 
   - name: vacancy_ids
-    description: "Dimension table for unique vacancy identifiers (Site_JobId)."
+    description: "Dimension table for unique vacancy identifiers."
     columns:
       - name: vacancy_id
         description: "Surrogate ID for the vacancy identifier."
       - name: vacancy_id_name
-        description: "The concatenated Site_JobId string."
+        description: "The vacancy identifier string extracted from the file path."
 
   - name: skills
     description: "Dimension table for technical skills (stored lowercase)."

@@ -18,3 +18,4 @@ dbt_vacancies:
       dbname: vacancies
       schema: public
       threads: 4
+      client_encoding: 'utf8'

@@ -1,7 +1,14 @@
 import os
-import subprocess
 import sys
 from pathlib import Path
+
+# Force UTF-8 encoding to prevent UnicodeDecodeError when PostgreSQL
+# returns localized (e.g., Russian) error messages. This reveals the true error.
+os.environ["PGCLIENTENCODING"] = "UTF8"
+os.environ["PYTHONUTF8"] = "1"
+os.environ["PYTHONIOENCODING"] = "utf-8"
+
+import subprocess
 
 from project_to_file import project_to_file_main
 
@@ -38,21 +45,28 @@ def main():
     dbt_cmd = ["dbt"] + dbt_args
     run_step(dbt_cmd, cwd=dbt_project_root)
 
-    # 2) Run etl_vacancy_jsons.py
-    etl_jsons_cmd = [
-        sys.executable,
-        str(script_dir / "etl" / "etl_vacancy_jsons.py")
-    ]
-    run_step(etl_jsons_cmd, cwd=script_dir)
+    for i in range(20):
+        if i > 0:
+            # Sleep for 20 minutes before retrying
+            print("Waiting 20 minutes before next ETL cycle...")
+            import time
+            time.sleep(1200)
 
-    # 3) Run etl_fact_vacancy.py
-    etl_fact_cmd = [
-        sys.executable,
-        str(script_dir / "etl" / "etl_fact_vacancy.py")
-    ]
-    run_step(etl_fact_cmd, cwd=script_dir)
+        # 2) Run etl_vacancy_jsons.py
+        etl_jsons_cmd = [
+            sys.executable,
+            str(script_dir / "etl" / "etl_vacancy_jsons.py")
+        ]
+        run_step(etl_jsons_cmd, cwd=script_dir)
 
-    print("All pipeline steps completed successfully.")
+        # 3) Run etl_fact_vacancy.py
+        etl_fact_cmd = [
+            sys.executable,
+            str(script_dir / "etl" / "etl_fact_vacancy.py")
+        ]
+        run_step(etl_fact_cmd, cwd=script_dir)
+
+        print("All pipeline steps completed successfully.")
 
 
 if __name__ == "__main__":
