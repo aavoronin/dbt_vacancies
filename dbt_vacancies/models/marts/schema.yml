@@ -1,0 +1,52 @@
+version: 2
+
+models:
+  - name: skills_per_vacancy
+    description: "Aggregated count of vacancies per skill, date, and employer country."
+    columns:
+      - name: date
+        description: "The date the vacancy was saved."
+      - name: skill
+        description: "The name of the required skill."
+      - name: country_of_employer
+        description: "The country where the employer is located."
+      - name: vacancy_count
+        description: "The number of unique vacancies requiring this skill in this country on this date."
+
+  - name: certs_per_vacancy
+    description: "Aggregated count of vacancies per certification, date, and employer country."
+    columns:
+      - name: date
+        description: "The date the vacancy was saved."
+      - name: cert
+        description: "The name of the required certification."
+      - name: cert_code
+        description: "The exam code for the certification, if available."
+      - name: country_of_employer
+        description: "The country where the employer is located."
+      - name: vacancy_count
+        description: "The number of unique vacancies requiring this certification in this country on this date."
+
+  - name: required_languages_per_vacancy
+    description: "Aggregated count of vacancies per required language, date, and employer country."
+    columns:
+      - name: date
+        description: "The date the vacancy was saved."
+      - name: required_language
+        description: "The name of the required language."
+      - name: country_of_employer
+        description: "The country where the employer is located."
+      - name: vacancy_count
+        description: "The number of unique vacancies requiring this language in this country on this date."
+
+  - name: employer_per_vacancy
+    description: "Aggregated count of vacancies per employer, date, and employer country."
+    columns:
+      - name: date
+        description: "The date the vacancy was saved."
+      - name: employer
+        description: "The name of the employer company."
+      - name: country_of_employer
+        description: "The country where the employer is located."
+      - name: vacancy_count
+        description: "The number of unique vacancies posted by this employer in this country on this date."
