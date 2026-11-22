@@ -144,3 +144,29 @@ models:
         description: "Foreign key to the data source."
       - name: partition_key
         description: "Partition key in YYYYMM format (matches fact.vacancy)."
+
+  - name: exchange_rates
+    description: "Fact table for daily currency exchange rates, partitioned by month."
+    columns:
+      - name: exchange_rate_fact_id
+        description: "Auto-incrementing surrogate ID for the fact record."
+      - name: date_id
+        description: "Foreign key to dict.calendar (YYYYMMDD)."
+      - name: currency_id
+        description: "Foreign key to dim.currencies."
+      - name: rate_usd
+        description: "Exchange rate to USD."
+      - name: rate_eur
+        description: "Exchange rate to EUR."
+      - name: load_dttm
+        description: "Timestamp of the ETL batch that last modified this record."
+      - name: load_id
+        description: "Foreign key to the ETL batch load."
+      - name: source_id
+        description: "Foreign key to the data source."
+      - name: partition_key
+        description: "Partition key in YYYYMM format based on exchange_date."
+      - name: modified_timestamp
+        description: "Timestamp of the source file's last modification."
+      - name: version
+        description: "ETL processing version for the record."

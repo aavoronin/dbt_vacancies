@@ -52,14 +52,28 @@ def main():
             import time
             time.sleep(1200)
 
-        # 2) Run etl_vacancy_jsons.py
+        # 2) Run etl_exchange_rates.py
+        etl_rates_cmd = [
+            sys.executable,
+            str(script_dir / "etl" / "etl_exchange_rates.py")
+        ]
+        run_step(etl_rates_cmd, cwd=script_dir)
+
+        # 3) Run etl_fact_exchange_rates.py
+        etl_fact_rates_cmd = [
+            sys.executable,
+            str(script_dir / "etl" / "etl_fact_exchange_rates.py")
+        ]
+        run_step(etl_fact_rates_cmd, cwd=script_dir)
+
+        # 4) Run etl_vacancy_jsons.py
         etl_jsons_cmd = [
             sys.executable,
             str(script_dir / "etl" / "etl_vacancy_jsons.py")
         ]
         run_step(etl_jsons_cmd, cwd=script_dir)
 
-        # 3) Run etl_fact_vacancy.py
+        # 5) Run etl_fact_vacancy.py
         etl_fact_cmd = [
             sys.executable,
             str(script_dir / "etl" / "etl_fact_vacancy.py")

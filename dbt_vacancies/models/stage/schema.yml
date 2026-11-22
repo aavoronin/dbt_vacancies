@@ -48,8 +48,7 @@ models:
           - unique
           - not_null
       - name: json
-        description: "Raw file content (UTF-8). May be invalid JSON
-          until parsed downstream."
+        description: "Raw file content (UTF-8). May be invalid JSON until parsed downstream."
       - name: file_path
         description: "Absolute path of the source file."
         data_tests:
@@ -93,3 +92,38 @@ models:
         description: "File system last-modified timestamp."
       - name: load_id
         description: "FK to stage.loads batch that wrote this row."
+
+  - name: exchange_rates_csvs
+    description: "Raw currency exchange rate files loaded from the Summary folder."
+    columns:
+      - name: exchange_rate_id
+        description: "Surrogate key for the loaded rate row."
+        data_tests:
+          - unique
+          - not_null
+      - name: file_path
+        description: "Absolute path of the source CSV file."
+        data_tests:
+          - not_null
+      - name: currency_code
+        description: "ISO currency code (e.g., USD, EUR)."
+        data_tests:
+          - not_null
+      - name: file_created_dttm
+        description: "File system creation timestamp."
+      - name: file_updated_dttm
+        description: "File system last-modified timestamp."
+      - name: exchange_date
+        description: "Date for which the exchange rate applies."
+        data_tests:
+          - not_null
+      - name: rate_usd
+        description: "Exchange rate to USD."
+      - name: rate_eur
+        description: "Exchange rate to EUR."
+      - name: load_id
+        description: "FK to stage.loads batch that wrote this row."
+        data_tests:
+          - relationships:
+              to: ref('loads')
+              field: load_id
