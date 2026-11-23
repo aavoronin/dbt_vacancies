@@ -4,10 +4,16 @@ models:
   - name: skills_per_vacancy
     description: "Aggregated count of vacancies per skill, date, and employer country."
     columns:
+      - name: date_key
+        description: "Surrogate key for the date the vacancy was saved."
       - name: date
         description: "The date the vacancy was saved."
+      - name: skill_id
+        description: "Surrogate key for the required skill."
       - name: skill
         description: "The name of the required skill."
+      - name: country_id
+        description: "Surrogate key for the employer country."
       - name: country_of_employer
         description: "The country where the employer is located."
       - name: vacancy_count
@@ -16,12 +22,18 @@ models:
   - name: certs_per_vacancy
     description: "Aggregated count of vacancies per certification, date, and employer country."
     columns:
+      - name: date_key
+        description: "Surrogate key for the date the vacancy was saved."
       - name: date
         description: "The date the vacancy was saved."
+      - name: certification_id
+        description: "Surrogate key for the required certification."
       - name: cert
         description: "The name of the required certification."
       - name: cert_code
         description: "The exam code for the certification, if available."
+      - name: country_id
+        description: "Surrogate key for the employer country."
       - name: country_of_employer
         description: "The country where the employer is located."
       - name: vacancy_count
@@ -30,10 +42,16 @@ models:
   - name: required_languages_per_vacancy
     description: "Aggregated count of vacancies per required language, date, and employer country."
     columns:
+      - name: date_key
+        description: "Surrogate key for the date the vacancy was saved."
       - name: date
         description: "The date the vacancy was saved."
+      - name: language_id
+        description: "Surrogate key for the required language."
       - name: required_language
         description: "The name of the required language."
+      - name: country_id
+        description: "Surrogate key for the employer country."
       - name: country_of_employer
         description: "The country where the employer is located."
       - name: vacancy_count
@@ -42,10 +60,16 @@ models:
   - name: employer_per_vacancy
     description: "Aggregated count of vacancies per employer, date, and employer country."
     columns:
+      - name: date_key
+        description: "Surrogate key for the date the vacancy was saved."
       - name: date
         description: "The date the vacancy was saved."
+      - name: employer_id
+        description: "Surrogate key for the employer company."
       - name: employer
         description: "The name of the employer company."
+      - name: country_id
+        description: "Surrogate key for the employer country."
       - name: country_of_employer
         description: "The country where the employer is located."
       - name: vacancy_count
